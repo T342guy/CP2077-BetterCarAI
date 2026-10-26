@@ -1,0 +1,86 @@
+# 40 junction lanes repaired, 42 links added (out-links only), 13 ms
+#16268 road|intersection|trafficDisabled: start moved 5.0 m from (3791.2, -911.4, 122.0) onto lane #12795
+#16381 road|intersection|trafficDisabled: end moved 5.0 m from (-553.4, 3177.6, 13.1) onto lane #8033
+#16383 road|intersection|trafficDisabled|gpsOnly: start moved 5.0 m from (-558.3, 3176.8, 13.1) onto lane #8032
+#16384 road|intersection|trafficDisabled: start moved 5.0 m from (-558.3, 3176.8, 13.1) onto lane #8032
+#16388 road|intersection|trafficDisabled: end moved 5.0 m from (-553.4, 3177.6, 13.1) onto lane #8033
+#19530 road|intersection|trafficDisabled: start moved 6.3 m from (-859.2, -1749.4, 9.7) onto lane #2228
+#19535 road|intersection|trafficDisabled: start moved 6.3 m from (-859.2, -1749.4, 9.7) onto lane #2228
+#20342 road|intersection|trafficDisabled|gpsOnly: start moved 5.0 m from (3676.6, 9.3, 141.1) onto lane #7195
+#20343 road|intersection|trafficDisabled: start moved 5.0 m from (3676.6, 9.3, 141.1) onto lane #7195
+#21203 road|intersection|trafficDisabled: end moved 6.2 m from (590.7, -984.9, 28.6) onto lane #5600
+#21214 road|intersection|trafficDisabled: end moved 6.2 m from (590.7, -984.9, 28.6) onto lane #5600
+#21223 road|intersection|trafficDisabled: start moved 5.0 m from (-1202.7, 1148.7, 17.1) onto lane #9090
+#21223 road|intersection|trafficDisabled: end moved 5.0 m from (-1216.4, 1167.0, 17.1) onto lane #6863
+#21226 road|intersection|trafficDisabled: start moved 5.0 m from (-1211.5, 1166.6, 17.1) onto lane #6862
+#21226 road|intersection|trafficDisabled: end moved 5.0 m from (-1202.2, 1153.6, 17.1) onto lane #9091
+#25401 road|intersection|trafficDisabled: start moved 5.0 m from (-994.7, 2092.0, 12.7) onto lane #7367
+#25406 road|intersection|trafficDisabled: start moved 5.0 m from (-994.7, 2092.0, 12.7) onto lane #7367
+#25409 road|intersection|trafficDisabled|gpsOnly: end moved 4.9 m from (-992.7, 2096.4, 12.7) onto lane #7368
+#26488 road|intersection|trafficDisabled|gpsOnly: end moved 5.0 m from (203.2, -237.2, 6.7) onto lane #6851
+#26494 road|intersection|trafficDisabled|gpsOnly: end moved 5.0 m from (203.2, -237.2, 6.7) onto lane #6851
+#26498 road|intersection|trafficDisabled|gpsOnly: end moved 5.0 m from (203.2, -237.2, 6.7) onto lane #6851
+#26501 road|intersection|trafficDisabled: start moved 5.0 m from (207.2, -240.2, 6.7) onto lane #6850
+#26502 road|intersection|trafficDisabled: start moved 5.0 m from (207.2, -240.2, 6.7) onto lane #6850
+#26503 road|intersection|trafficDisabled|gpsOnly: start moved 5.0 m from (207.2, -240.2, 6.7) onto lane #6850
+#26504 road|intersection|trafficDisabled|gpsOnly: start moved 5.0 m from (207.2, -240.2, 6.7) onto lane #6850
+#26505 road|intersection|trafficDisabled: start moved 5.0 m from (207.2, -240.2, 6.7) onto lane #6850
+#27436 road|intersection|trafficDisabled|gpsOnly: start moved 5.0 m from (-1079.4, 1308.2, 5.2) onto lane #9672
+#27437 road|intersection|trafficDisabled|gpsOnly: start moved 5.0 m from (-1079.4, 1308.2, 5.2) onto lane #9672
+#27440 road|intersection|trafficDisabled|gpsOnly: start moved 5.0 m from (-1079.4, 1308.2, 5.2) onto lane #9672
+#27442 road|intersection|trafficDisabled|gpsOnly: end moved 5.0 m from (-1074.4, 1308.0, 5.2) onto lane #9673
+#27445 road|intersection|trafficDisabled|gpsOnly: end moved 5.0 m from (-1074.4, 1308.0, 5.2) onto lane #9673
+#27953 road|intersection|trafficDisabled: start moved 5.0 m from (225.0, -227.5, 6.7) onto lane #10567
+#27958 road|intersection|trafficDisabled|gpsOnly: start moved 5.0 m from (225.0, -227.5, 6.7) onto lane #10567
+#27959 road|intersection|trafficDisabled: end moved 5.0 m from (226.1, -222.6, 6.7) onto lane #10568
+#27963 road|intersection|trafficDisabled: end moved 5.0 m from (226.1, -222.6, 6.7) onto lane #10568
+#28718 road|intersection|trafficDisabled: start moved 5.0 m from (-767.5, 1823.3, 36.0) onto lane #11560
+#28723 road|intersection|trafficDisabled: start moved 5.0 m from (-767.5, 1823.3, 36.0) onto lane #11560
+#28724 road|intersection|trafficDisabled|gpsOnly: end moved 5.0 m from (-772.5, 1823.0, 36.0) onto lane #11561
+#28728 road|intersection|trafficDisabled: end moved 5.0 m from (-772.5, 1823.0, 36.0) onto lane #11561
+#32014 road|intersection|trafficDisabled: end moved 5.0 m from (-1169.8, 1860.9, 39.1) onto lane #6569
+#32020 road|intersection|trafficDisabled|gpsOnly: end moved 5.0 m from (-1169.8, 1860.9, 39.1) onto lane #6569
+#32022 road|intersection|trafficDisabled: start moved 5.0 m from (-1174.8, 1861.0, 38.9) onto lane #6568
+in-link layout from 0 lanes: too few samples
+  linked #2228 -> #19530 (out-link only)
+  linked #2228 -> #19535 (out-link only)
+  linked #6568 -> #32022 (out-link only)
+  linked #6850 -> #26501 (out-link only)
+  linked #6850 -> #26502 (out-link only)
+  linked #6850 -> #26503 (out-link only)
+  linked #6850 -> #26504 (out-link only)
+  linked #6850 -> #26505 (out-link only)
+  linked #6862 -> #21226 (out-link only)
+  linked #7195 -> #20342 (out-link only)
+  linked #7195 -> #20343 (out-link only)
+  linked #7367 -> #25401 (out-link only)
+  linked #7367 -> #25406 (out-link only)
+  linked #8032 -> #16383 (out-link only)
+  linked #8032 -> #16384 (out-link only)
+  linked #9090 -> #21223 (out-link only)
+  linked #9672 -> #27436 (out-link only)
+  linked #9672 -> #27437 (out-link only)
+  linked #9672 -> #27440 (out-link only)
+  linked #10567 -> #27953 (out-link only)
+  linked #10567 -> #27958 (out-link only)
+  linked #11560 -> #28718 (out-link only)
+  linked #11560 -> #28723 (out-link only)
+  linked #12795 -> #16268 (out-link only)
+  linked #16381 -> #8033 (out-link only)
+  linked #16388 -> #8033 (out-link only)
+  linked #21203 -> #5600 (out-link only)
+  linked #21214 -> #5600 (out-link only)
+  linked #21223 -> #6863 (out-link only)
+  linked #21226 -> #9091 (out-link only)
+  linked #25409 -> #7368 (out-link only)
+  linked #26488 -> #6851 (out-link only)
+  linked #26494 -> #6851 (out-link only)
+  linked #26498 -> #6851 (out-link only)
+  linked #27442 -> #9673 (out-link only)
+  linked #27445 -> #9673 (out-link only)
+  linked #27959 -> #10568 (out-link only)
+  linked #27963 -> #10568 (out-link only)
+  linked #28724 -> #11561 (out-link only)
+  linked #28728 -> #11561 (out-link only)
+  linked #32014 -> #6569 (out-link only)
+  linked #32020 -> #6569 (out-link only)
