@@ -7,13 +7,14 @@ local Profiles = require("profiles")
 local UI = require("ui")
 local Overlay = require("overlay")
 local Nav = require("nav")
+local DriveTest = require("drivetest")
 local log = Profiles.log
 
 local SETTINGS_FILE = "settings.json"
 -- Places where AI drive lost it on its own (see BCAISettings trouble spots).
 local SPOTS_FILE = "trouble_spots.json"
 -- Bump when defaults change in a way that saved settings should not override.
-local SETTINGS_VERSION = 10
+local SETTINGS_VERSION = 11
 
 local defaults = {
   -- NPC traffic reactions (applied by the redscript half)
@@ -99,8 +100,9 @@ local defaults = {
   -- BCAI Autodrive+ (native plugin 0.16+): our own driving AI. Plans over the lane map and drives
   -- the car through its own controls.
   ownMaxSpeedKmh = 180.0,
-  -- Cornering grip (g) the speed plan allows for in bends.
-  ownCornerGrip = 0.8,
+  -- Cornering grip (g) the speed plan allows for in bends. (The game's
+  -- cars hold about 2 g, the body 8-15 degrees into the bend: driving tests.)
+  ownCornerGrip = 1.3,
   -- Speed on a road = its traffic speed x this (city 36 -> 79, highway 61 -> 134 km/h).
   ownLaneSpeedFactor = 2.2,
   ownBrakeDecel = 4.0,
@@ -113,16 +115,19 @@ local defaults = {
   ownAskStyle = true,
   cityMaxSpeedKmh = 110.0,
   cityLaneSpeedFactor = 1.3,
-  cityCornerGrip = 0.6,
+  cityCornerGrip = 0.7,
   cityBrakeDecel = 3.0,
   cityFollowTime = 2.0,
   madMaxSpeedKmh = 250.0,
   madLaneSpeedFactor = 3.0,
-  madCornerGrip = 0.95,
+  madCornerGrip = 1.7,
   madBrakeDecel = 5.0,
   madFollowTime = 0.8,
   -- Starting autodrive starts Autodrive+ (instead of AI drive).
   ownTakeOverAutodrive = false,
+  -- While Autodrive+ drives, show the game's autodrive HUD (the wheel icon on
+  -- the minimap, the side panel with distance and time left).
+  ownGameHud = true,
   -- Write what Autodrive+ does to the log twice a second, raw numbers
   -- ("Autodrive+ raw:" lines).
   ownLog = true,
@@ -176,6 +181,8 @@ local migrations = {
   [8] = { "aiTroubleSpotKmh" },
   [9] = { "ownMaxSpeedKmh", "ownLaneSpeedFactor", "ownCornerGrip" },
   [10] = {},
+  -- (0.30: the styles' cornering grip, measured in driving tests.)
+  [11] = { "cityCornerGrip", "ownCornerGrip", "madCornerGrip" },
 }
 
 local settings = {}
@@ -300,6 +307,38 @@ end
 local function mountedVehicle()
   local player = Game.GetPlayer()
   return player and player:GetMountedVehicle()
+end
+
+-- The mounted car's physics as its records give them (Settings.reds
+-- CarData), parsed, with a one-line summary; read again when the car changes.
+local function carData()
+  local vehicle = mountedVehicle()
+  local sys = scriptSettings()
+  if not vehicle or not sys then return nil end
+  local okId, key = pcall(function() return TDBID.ToStringDEBUG(vehicle:GetRecordID()) end)
+  if state.carData and okId and state.carData.key == key then return state.carData end
+  local ok, text = pcall(function() return sys:CarData() end)
+  if not ok or not text or text == "" then return nil end
+  local c = { key = okId and key or "?", raw = tostring(text) }
+  for k, v in c.raw:gmatch("([%w_]+)=([^;]*)") do c[k] = tonumber(v) or v end
+  local parts = {}
+  local mass = (c.mass or 0) > 0 and c.mass or c.recordMass
+  if mass then table.insert(parts, string.format("%.0f kg", mass)) end
+  if (c.length or 0) > 1 then table.insert(parts, string.format("%.1f x %.1f m", c.length, c.width or 0)) end
+  if c.frontFriction and c.backFriction then
+    local f, b = c.frontFriction * (c.frontLat or 1), c.backFriction * (c.backLat or 1)
+    table.insert(parts, string.format("tyres %.2f front, %.2f rear (sideways friction)", f, b))
+  end
+  -- (Braking torque at the four wheels over the tyre radius and the mass:
+  -- what the brakes could do, if the tyres hold.)
+  if c.frontBrake and c.backBrake and c.tireRadius and c.tireRadius > 0 and mass and mass > 0 then
+    table.insert(parts, string.format("brakes up to %.1f m/s2", 2 * (c.frontBrake + c.backBrake) / c.tireRadius / mass))
+  end
+  if c.engineTorque then table.insert(parts, string.format("engine %.0f Nm", c.engineTorque)) end
+  if c.wheelTurn then table.insert(parts, string.format("steering lock %.0f deg", c.wheelTurn)) end
+  c.summary = table.concat(parts, ", ")
+  state.carData = c
+  return c
 end
 
 local function autodriveSystem()
@@ -472,6 +511,9 @@ local function stopOwnDriver(why, message)
   state.ownDriving = false
   state.hud = {}
   log("Autodrive+ stopped: " .. why)
+  -- (The button press that stopped it may also come through as a request
+  -- to start: not for a moment.)
+  state.requestQuietUntil = os.clock() + 1.5
   if sys then sys:ShowMessage(message or ("Autodrive+: OFF (" .. why:sub(1, 60) .. ")")) end
 end
 
@@ -485,8 +527,9 @@ local function startOwnDriver()
     return
   end
   local vehicle = sys:OwnDriverVehicle()
-  -- The pin itself (the game's autodrive point may be on the wrong level).
-  local goal = sys:NavDestination()
+  -- The pin itself (the game's autodrive point may be on the wrong level),
+  -- or a driving test's destination.
+  local goal = Nav.Destination(sys)
   -- The car's own size first (the road room it plans with depends on it).
   local body = sys:OwnDriverBody()
   pcall(function() Game.BCAI_DriverBody(body) end)
@@ -511,6 +554,9 @@ local function startOwnDriver()
     .. (goal.w > 0.5 and ("; destination: " .. tostring(sys:NavDestinationInfo())) or ""))
   state.ownVehicleTimer = 0
   state.ownVehiclesFailed = false
+  if settings.ownGameHud then sys:ShowOwnDriverHud(true, goal.w < 0.5) end
+  local car = carData()
+  if car then log("Autodrive+: the car's records: " .. car.summary .. " (" .. car.raw .. ")") end
   sys:ShowMessage(msg)
 end
 
@@ -526,9 +572,9 @@ end
 
 -- The style picker: shown for a few seconds before Autodrive+ starts. The
 -- player's inputs choose (the car is still theirs until it starts): steering
--- moves the choice, throttle starts, brake cancels; at the end of the time
--- it starts with the choice. Then it waits for the controls to be let go
--- (they would take over again at once).
+-- moves the choice, the autodrive button again or throttle starts, brake
+-- cancels; at the end of the time it starts with the choice. Then it waits
+-- for the controls to be let go (they would take over again at once).
 local PICKER_SECONDS = 6.0
 
 local function closePicker()
@@ -563,12 +609,8 @@ local function pickerTick(dt)
   local picker = state.picker
   local sys = scriptSettings()
   if not sys or not mountedVehicle() then return closePicker() end
-  -- (The autodrive button again: cancel.)
-  if sys:TakeAutodrivePlusRequest() then
-    closePicker()
-    sys:ShowMessage("Autodrive+: cancelled")
-    return
-  end
+  -- (The autodrive button again: start with the style chosen.)
+  local again = sys:TakeAutodrivePlusRequest()
   local input = sys:InputWatchValues()
   picker.left = picker.left - dt
   if picker.phase == "choose" then
@@ -582,7 +624,7 @@ local function pickerTick(dt)
       picker.choice = math.max(0, math.min(2, picker.choice + (input.z > 0 and 1 or -1)))
     end
     picker.steer = input.z
-    if input.x > 0.5 or picker.left <= 0 then confirmPicker() end
+    if again or input.x > 0.5 or picker.left <= 0 then confirmPicker() end
   elseif (math.abs(input.x) < 0.2 and math.abs(input.y) < 0.2 and math.abs(input.z) < 0.2) or picker.left <= 0 then
     closePicker()
     startOwnDriver()
@@ -625,6 +667,11 @@ local function ownDriverTick(dt)
   if stylesAvailable() then
     local okHud, hud = pcall(function() return Game.BCAI_DriverHud() end)
     state.hud = okHud and Overlay.ParseHud(hud) or {}
+  end
+  -- The game's autodrive HUD; the game clearing its autodrive flag (combat,
+  -- a drawn weapon, heavy damage, a quest) hands back control as it would.
+  if settings.ownGameHud and not sys:RefreshOwnDriverHud(state.hud.left or -1) then
+    return stopOwnDriver("the game switched autodrive off (combat, a weapon, damage or a quest)")
   end
   takeOwnEvents()
   -- The vehicles the game knows of nearby, ten times a second. (Failing here
@@ -988,7 +1035,7 @@ registerForEvent("onUpdate", function(dt)
   elseif settings.ownTakeOverAutodrive then
     -- Starting autodrive asked for Autodrive+ (the scripts held native autodrive back).
     local sys = scriptSettings()
-    if sys and sys:TakeAutodrivePlusRequest() then requestOwnDriver() end
+    if sys and sys:TakeAutodrivePlusRequest() and os.clock() >= (state.requestQuietUntil or 0) then requestOwnDriver() end
   end
   if state.controlProbe then controlProbeTick(dt) end
   if state.controlTest then controlTestTick(dt) end
@@ -1035,6 +1082,7 @@ registerForEvent("onUpdate", function(dt)
   end
   if state.debugDraw or settings.recorder then overlayTick(dt) end
   Nav.Tick(dt)
+  DriveTest.Tick(dt)
   if state.trace then
     state.traceTimer = state.traceTimer + dt
     if state.traceTimer >= 1.0 then
@@ -1146,6 +1194,7 @@ local app = {
   startControlProbe = startControlProbe,
   startControlTest = startControlTest,
   nav = Nav,
+  driveTest = DriveTest,
 }
 
 function app.resetAll()
@@ -1196,6 +1245,25 @@ Nav.Init({
   mountedVehicle = mountedVehicle,
   nativeVersion = nativeVersion,
   visible = overlayVisible,
+  overlayDrawsPath = function() return state.debugDraw and state.ownDriving and settings.overlayRoute end,
+  ownDriving = function() return state.ownDriving end,
+})
+
+-- The driving test (drivetest.lua): a random route, driven by the player and
+-- then by Autodrive+, both recorded.
+DriveTest.Init({
+  settings = settings,
+  state = state,
+  log = log,
+  scriptSettings = scriptSettings,
+  mountedVehicle = mountedVehicle,
+  nativeVersion = nativeVersion,
+  autodriveSystem = autodriveSystem,
+  nav = Nav,
+  startOwnDriver = startOwnDriver,
+  stopOwnDriver = stopOwnDriver,
+  carData = carData,
+  styleName = function() return Overlay.STYLE_NAMES[settings.ownStyle + 1] end,
 })
 
 local function drawOverlay(sys)
@@ -1217,6 +1285,7 @@ local function drawOverlay(sys)
     mode = mode,
     stats = stats,
     overlayOpen = state.overlayOpen,
+    car = carData(),
   })
 end
 

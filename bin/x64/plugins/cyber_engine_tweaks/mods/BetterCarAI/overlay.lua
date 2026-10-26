@@ -249,8 +249,12 @@ function Overlay.DrawPanel(ctx)
     if own then
       ImGui.Text(string.format("This drive: %.0f m off the road, %d replans, %d lane changes, %d changes of mind",
         hud.offroad or 0, hud.replans or 0, hud.moves or 0, hud.dithers or 0))
-      ImGui.Text(string.format("Grip (learned) %.2f g, slip angle %.1f deg", hud.grip or 0, hud.slip or 0))
+      ImGui.Text(string.format("Grip it corners at %.2f g (a new car starts at 1 g and builds up to the style's in clean bends; less where it slid), slip angle %.1f deg",
+        hud.grip or 0, hud.slip or 0))
       colouredText(GREY, "Status: " .. tostring(hud.status or ""))
+    end
+    if ctx.car and ctx.car.summary ~= "" then
+      colouredText(GREY, "The car's records: " .. ctx.car.summary)
     end
     if d then
       ImGui.Text(string.format("Look-ahead rays (%.0f m): car %s, wall %s", d:Lookahead(),
@@ -263,7 +267,7 @@ function Overlay.DrawPanel(ctx)
     local s = ctx.stats or {}
     colouredText(GREY, string.format("drawn: %d shapes, %d on screen", s.shapes or 0, s.onScreen or 0))
     ImGui.Separator()
-    colouredText(GREY, "trail: green grip / yellow-red sliding / magenta airborne")
+    colouredText(GREY, "trail: green grip / yellow cornering hard / red sliding / magenta airborne")
     colouredText(GREY, "plan: blue at speed / yellow-orange-red slowing; magenta: in the way")
     colouredText(GREY, "rays: orange car / red wall / yellow road rising / grey clear")
     colouredText(GREY, "cyan: where the car's motion takes it in 2 s; white: heading")

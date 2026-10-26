@@ -19,6 +19,10 @@ public class BCAIOwnDriver extends IScriptable {
   public let rear: Float;
   public let halfWidth: Float;
   private let player: wref<PlayerPuppet>;
+  // How far the body may reach from the centre along the car and to a side
+  // (from its record's size; at least a car's).
+  private let reach: Float;
+  private let halfReach: Float;
   // Vehicles found nearby by each of the game's two searches, last time.
   public let fromTraffic: Int32;
   public let fromTargeting: Int32;
@@ -30,9 +34,23 @@ public class BCAIOwnDriver extends IScriptable {
     this.sensorGroup = IsNameValid(sensorGroup) ? sensorGroup : n"Vehicle";
     this.obstacle = -1.0;
     this.player = player;
-    this.front = this.MeasureFront(game, vehicle);
-    this.rear = this.MeasureAlong(game, vehicle, -1.0, 3.0);
-    this.halfWidth = this.MeasureAcross(game, vehicle);
+    // (Rays from 6 m out; finding nothing there (a truck, whose body starts
+    // further out), from 15 m. Its record's size can't say: the game gives
+    // 3 x 1 m for cars 5.5 m long.)
+    this.reach = 4.0;
+    this.halfReach = 2.0;
+    this.front = this.MeasureFront(game, vehicle, -1.0);
+    this.rear = this.MeasureAlong(game, vehicle, -1.0, -1.0);
+    if this.front < 0.0 || this.rear < 0.0 {
+      this.reach = 13.0;
+      if this.front < 0.0 {
+        this.front = this.MeasureFront(game, vehicle, 3.0);
+      };
+      if this.rear < 0.0 {
+        this.rear = this.MeasureAlong(game, vehicle, -1.0, 3.0);
+      };
+    };
+    this.halfWidth = this.MeasureAcross(game, vehicle, 0.95);
     ArrayClear(this.targeted);
     this.targetedAt = -1.0;
     // Steering, throttle or brake from the player hands control back.
@@ -57,15 +75,18 @@ public class BCAIOwnDriver extends IScriptable {
     if AbsF(this.input.throttle) > 0.3 || AbsF(this.input.brake) > 0.3 || AbsF(this.input.steer) > 0.3 {
       return "player input";
     };
+    if this.input.autodriveButton {
+      return "autodrive button";
+    };
     return "";
   }
 
   // The car's front: rays from 6 m ahead back to its centre hit it there,
   // at a few heights (a sloping nose reaches furthest low down), the
-  // furthest of them. Something else within 6 m ahead would be hit first,
-  // so anything past 4 m (no car is that long from its centre) is left out;
-  // nothing measured falls back to 3 m.
-  private func MeasureFront(game: GameInstance, vehicle: ref<VehicleObject>) -> Float {
+  // furthest of them. Something else ahead would be hit first, so anything
+  // further than the body can reach (4 m for a car; a truck's from its
+  // record) is left out; nothing measured falls back to aFallback.
+  private func MeasureFront(game: GameInstance, vehicle: ref<VehicleObject>, aFallback: Float) -> Float {
     let sqs: ref<SpatialQueriesSystem> = GameInstance.GetSpatialQueriesSystem(game);
     let fwd: Vector4 = vehicle.GetWorldForward();
     let up: Vector4 = vehicle.GetWorldUp();
@@ -75,20 +96,20 @@ public class BCAIOwnDriver extends IScriptable {
     while i < ArraySize(heights) {
       let trace: TraceResult;
       let centre: Vector4 = vehicle.GetWorldPosition() + up * heights[i];
-      if sqs.SyncRaycastByCollisionGroup(centre + fwd * 6.0, centre, this.sensorGroup, trace, false, false) && TraceResult.IsValid(trace) {
+      if sqs.SyncRaycastByCollisionGroup(centre + fwd * (this.reach + 2.0), centre, this.sensorGroup, trace, false, false) && TraceResult.IsValid(trace) {
         let front: Float = Vector4.Dot(Vector4.Vector3To4(trace.position) - centre, fwd);
-        if front > 1.5 && front < 4.0 && front > best {
+        if front > 1.5 && front < this.reach && front > best {
           best = front;
         };
       };
       i += 1;
     };
-    return best > 0.0 ? best : 3.0;
+    return best > 0.0 ? best : aFallback;
   }
 
   // How far the car's body reaches from its centre along its length (aDir 1
   // forward, -1 back): rays from 6 m out back to the centre, at a few
-  // heights, the furthest hit (within 4 m; aFallback if none).
+  // heights, the furthest hit (within its reach; aFallback if none).
   private func MeasureAlong(game: GameInstance, vehicle: ref<VehicleObject>, aDir: Float, aFallback: Float) -> Float {
     let sqs: ref<SpatialQueriesSystem> = GameInstance.GetSpatialQueriesSystem(game);
     let fwd: Vector4 = vehicle.GetWorldForward() * aDir;
@@ -99,9 +120,9 @@ public class BCAIOwnDriver extends IScriptable {
     while i < ArraySize(heights) {
       let trace: TraceResult;
       let centre: Vector4 = vehicle.GetWorldPosition() + up * heights[i];
-      if sqs.SyncRaycastByCollisionGroup(centre + fwd * 6.0, centre, this.sensorGroup, trace, false, false) && TraceResult.IsValid(trace) {
+      if sqs.SyncRaycastByCollisionGroup(centre + fwd * (this.reach + 2.0), centre, this.sensorGroup, trace, false, false) && TraceResult.IsValid(trace) {
         let reach: Float = Vector4.Dot(Vector4.Vector3To4(trace.position) - centre, fwd);
-        if reach > 1.0 && reach < 4.0 && reach > best {
+        if reach > 1.0 && reach < this.reach && reach > best {
           best = reach;
         };
       };
@@ -112,13 +133,13 @@ public class BCAIOwnDriver extends IScriptable {
 
   // Half the car's width: rays from 3 m out either side back to its middle,
   // at a few heights and along its length (mirrors included), the widest.
-  private func MeasureAcross(game: GameInstance, vehicle: ref<VehicleObject>) -> Float {
+  private func MeasureAcross(game: GameInstance, vehicle: ref<VehicleObject>, aFallback: Float) -> Float {
     let sqs: ref<SpatialQueriesSystem> = GameInstance.GetSpatialQueriesSystem(game);
     let fwd: Vector4 = vehicle.GetWorldForward();
     let up: Vector4 = vehicle.GetWorldUp();
     let right: Vector4 = vehicle.GetWorldRight();
     let heights: array<Float> = [0.5, 0.8, 1.05];
-    let alongs: array<Float> = [-1.0, 0.0, 1.0];
+    let alongs: array<Float> = [-0.3 * this.reach, 0.0, 0.3 * this.reach];
     let sides: array<Float> = [-1.0, 1.0];
     let best: Float = -1.0;
     let h: Int32 = 0;
@@ -130,9 +151,9 @@ public class BCAIOwnDriver extends IScriptable {
           let trace: TraceResult;
           let middle: Vector4 = vehicle.GetWorldPosition() + up * heights[h] + fwd * alongs[a];
           let out: Vector4 = right * sides[k];
-          if sqs.SyncRaycastByCollisionGroup(middle + out * 3.0, middle, this.sensorGroup, trace, false, false) && TraceResult.IsValid(trace) {
+          if sqs.SyncRaycastByCollisionGroup(middle + out * (this.halfReach + 1.0), middle, this.sensorGroup, trace, false, false) && TraceResult.IsValid(trace) {
             let reach: Float = Vector4.Dot(Vector4.Vector3To4(trace.position) - middle, out);
-            if reach > 0.4 && reach < 2.0 && reach > best {
+            if reach > 0.4 && reach < this.halfReach && reach > best {
               best = reach;
             };
           };
@@ -142,7 +163,18 @@ public class BCAIOwnDriver extends IScriptable {
       };
       h += 1;
     };
-    return best > 0.0 ? best : 0.95;
+    return best > 0.0 ? best : aFallback;
+  }
+
+  // A vehicle's size as its record gives it: X length, Y width, Z height
+  // (m; 0 when it has none).
+  public static func RecordSize(v: wref<VehicleObject>) -> Vector4 {
+    let record: wref<Vehicle_Record> = IsDefined(v) ? v.GetRecord() : null;
+    if IsDefined(record) && IsDefined(record.Destruction()) {
+      let d: Vector3 = record.Destruction().VehicleDimensions();
+      return new Vector4(MaxF(d.X, d.Y), MinF(d.X, d.Y), d.Z, 0.0);
+    };
+    return new Vector4(0.0, 0.0, 0.0, 0.0);
   }
 
   // The car's body for the plugin: X front, Y rear, Z half width.
@@ -223,9 +255,15 @@ public class BCAIOwnDriver extends IScriptable {
       let p: Vector4 = v.GetWorldPosition();
       let flags: Float = (v.IsVehicleParked() ? 1.0 : 0.0) + (IsDefined(v as BikeObject) ? 2.0 : 0.0);
       p.W = flags;
+      // (Its size in the W of the other two: the plugin takes it from 0.29.)
+      let size: Vector4 = BCAIOwnDriver.RecordSize(v);
+      let fwd: Vector4 = v.GetWorldForward();
+      let vel: Vector4 = v.GetLinearVelocity();
+      fwd.W = size.X;
+      vel.W = size.Y;
       ArrayPush(out, p);
-      ArrayPush(out, v.GetWorldForward());
-      ArrayPush(out, v.GetLinearVelocity());
+      ArrayPush(out, fwd);
+      ArrayPush(out, vel);
       i += 1;
     };
     return out;

@@ -43,6 +43,19 @@ constexpr float kCruiseLength = 800.0f;
 constexpr float kHalfWidth = 1.0f; // half a car's width, with a little to spare
 constexpr float kBehind = 45.0f;   // how far back the sensor keeps what it saw
 constexpr float kCarWidth = 1.9f, kCarLength = 4.6f;
+// The game's cars corner hardest with the body 8-15 degrees off the way they
+// go (driving tests: about 2 g there, falling off past 20-30 degrees), the
+// slip growing with the cornering (about 7 degrees at 1 g). Sliding is slip
+// well past what the cornering asks for (CarResponse::slipStiff), or past
+// this slip angle (radians) whatever it corners at.
+constexpr float kSlideSlip = 0.45f;
+// The grip a car new to Autodrive+ corners at (m/s^2), until cornering
+// cleanly shows it holds more (up to the style's): a car with less grip than
+// the style asks for would otherwise slide off at its first hard corner.
+constexpr float kStartGrip = 10.0f;
+// Sideways acceleration moves across lanes are planned with, at most (m/s^2):
+// a lane change stays a lane change however hard the car can corner.
+constexpr float kMoveLat = 9.3f;
 
 // y = k·x^p, fitted while driving: least squares on ln y = ln k + p·ln x,
 // older samples fading out and pulled towards a prior, so a few odd samples
@@ -94,8 +107,20 @@ struct CarResponse
     PowerFit brake{8.0f, 0.3f, 0.1f, 2.0f};
     // Speeding up at full throttle, and coasting (both m/s^2), by speed.
     float full[kBuckets], coast[kBuckets];
-    // Sideways acceleration (m/s^2) where it slid or ran wide, 0 until it has.
+    // The sideways acceleration (m/s^2) it corners up to: lowered where it
+    // slid or ran wide, raised while it corners near that cleanly; 0 until
+    // it has cornered (kStartGrip).
     float grip = 0.0f;
+    // Where it last slid (m/s^2; 0: it hasn't): grip rises past that only slowly.
+    float slidAt = 0.0f;
+    // Sideways acceleration per radian of slip while it grips (the game's
+    // sports cars about 86: 1 g at 6.5 degrees).
+    float slipStiff = 86.0f;
+    // The turn at full lock (curvature x SpeedTurn) as seen: the steering
+    // fit, learned with the wheel turned a little, says far less for the
+    // game's cars (they turned on 4 m across junctions; the fit said 7 m).
+    float turnSeen = 0.0f;
+    float Reach() const { return std::max(steer.k, turnSeen); }
 
     CarResponse() { Reset(0); }
 
@@ -105,6 +130,9 @@ struct CarResponse
         steer = PowerFit{0.17f, 2.0f, 0.7f, 3.5f};
         brake = PowerFit{8.0f, 0.3f, 0.1f, 2.0f};
         grip = 0.0f;
+        slipStiff = 86.0f;
+        turnSeen = 0.0f;
+        slidAt = 0.0f;
         for (int i = 0; i < kBuckets; ++i)
         {
             float v = i * kBucket;
@@ -400,6 +428,8 @@ private:
     float mHeading = 0.0f, mYawRate = 0.0f, mSteer = 0.0f, mLastV = 0.0f, mAccel = 0.0f;
     float mSteerFelt = 0.0f, mThrottleFelt = 0.0f, mBrakeFelt = 0.0f;
     float mCurvTrim = 0.0f, mAccelWant = 0.0f, mAccelLagged = 0.0f, mAccelTrim = 0.0f, mGripSpeed = 100.0f;
+    float mSlideTime = 0.0f; // how long it has been sliding (s)
+    bool mBraking = false; // on the brake (Pedals: a little slowing is left to coasting)
     int mPedals = 0;
     float mPedalTime = 0.0f;
     CarResponse mCar;
@@ -432,7 +462,7 @@ private:
     bool mBlockMeasured = false;
     float mLeadSpeed = 0.0f, mStuck = 0.0f, mLastLateral = 0.0f;
     float mLeadGap = -1.0f; // the gap mLeadSpeed was last measured at
-    float mProfileLat = 0.0f, mProfileDecel = 0.0f; // the limits the speed plan was made with
+    float mProfileLat = 0.0f, mProfileDecel = 0.0f, mProfileTurn = 0.0f; // the limits the speed plan was made with
     int mStartHits = 0;     // rays that hit something where they start
     float mOffRoad = 0.0f;  // metres driven off the mapped road
     float mLastTo = 0.0f;   // the last move 2 m or more sideways, and how many
@@ -581,7 +611,8 @@ private:
     void NoteFrame(const Motion& m, const DriverOutput& aOut, bool aOffRoad);
 
     // What this car can do: as learned, never more than the settings allow.
-    float LatAccel() const { return mCar.grip > 0.0f ? std::min(mSettings.latAccel, mCar.grip) : mSettings.latAccel; }
+    float LatAccel() const { return std::min(mSettings.latAccel, mCar.grip > 0.0f ? mCar.grip : kStartGrip); }
+    float MoveLat() const { return std::min(LatAccel(), kMoveLat); }
     float BrakeMax() const { return std::clamp(mCar.brake.k, 4.0f, 10.0f); }
     float Decel() const { return std::min(mSettings.decel, 0.55f * BrakeMax()); }
     float AccelAt(float v) const { return std::clamp(0.8f * CarResponse::Lookup(mCar.full, v), 0.5f, 2.0f); }

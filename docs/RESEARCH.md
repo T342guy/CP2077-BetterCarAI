@@ -891,3 +891,125 @@ The GPS plans over the traffic lane table: every `worldTrafficLanePersistent` ha
   - It draws the next 300 m of the route as a yellow line on the road (projected by `BCAIDebug.ProjectPolyline`, without the debug overlay), with the next turn at the top of the screen.
   - It writes `Route |` lines to the log.
 - *Untested in game:* all of it. In particular, which height a custom map pin really has, and how often the game's autodrive point differs from the pin.
+
+## Pedals, the game's autodrive HUD, trucks and walkways (plugin 0.29)
+
+From the user's notes on 0.28.
+
+**Pedals.** The debug HUD showed the brake going to 100% for half a second and then off again, and the throttle jumping. The log showed the cause, following a car at 63 km/h about 40 m back:
+- The target speed flipped between about 60 and 97 km/h every second or two.
+- The following rule used "the lead car's speed, plus 0.4 m/s per metre short of the wanted gap" inside the gap. Outside it used "the speed it could still stop from". Those two disagree where they hand over, and the wanted gap moves with the car's own speed.
+- On top of that, the slowing needed to match the lead car's speed was *added* to the speed controller's own braking. Together they reached the −9 m/s² limit, which is a full brake.
+
+0.29 changes:
+- One gap rule on both sides of the wanted gap (0.4 m/s per metre short of it, 0.7 per metre past it).
+- The harder of the two braking requests, not their sum.
+- The wanted acceleration changes at 5 m/s³ (12 when it wants more than 3 m/s² of slowing, 25 only when it must stop hard).
+- The throttle eases on (full in about 0.7 s) and off at 4/s.
+- Slowing of up to 0.6 m/s² beyond coasting is left to coasting, so the brake doesn't flick on to hold a speed.
+
+Each simulated drive now reports `pedals:`: travel per minute, seconds of hard braking per minute, and quick flips (a pedal held under a second before the other).
+
+The battery, 0.28 → 0.29 (city: seeds 7 and 11 together):
+
+| Car | City touches | Quick flips per city drive | City pedal travel | Hard brake | Highway touches | Obstacle touches |
+|---|---|---|---|---|---|---|
+| Default | 30 → 25 | 1.2 → 0.3 | 14 → 10 per min | −40% | 0 → 1 | 2 → 1 |
+| Hellhound | 32 → 41 | 2.7 → 0.9 | 15 → 9 per min | −40% | 2 → 0 | 4 → 2 |
+| Maimai | 7 → 4 | 0.5 → 0.15 | 12 → 7 per min | −35% | 0 → 0 | 0 → 0 |
+
+- City touches in all: 69 → 70.
+- City average speed is 1–3 km/h lower, and the highway 1–2 km/h.
+- The Hellhound's off-road metres in the city dropped from 349 to 128.
+- Its extra touches are mostly oncoming cars at about 10 km/h, at one tight right turn on D1 (about 825 m in). There it runs a metre wide on full lock, and the simulated oncoming car doesn't brake. 0.28 swings wide there too; whether a car is there depends on when it arrives.
+- Raising the gap rule's gain past the wanted gap from 0.4 to 0.7 won back 2 km/h on the highway.
+- The throttle ramp turned out not to cost speed: 2.5/s gave the same as 1.5/s.
+
+**The game's autodrive HUD.** The wheel icon on the minimap (`MinimapContainerController.OnAutoDriveStateChanged`) and the side panel (`AutoDriveController`) only listen to the `UI_AutodriveData` blackboard:
+- `AutoDriveEnabled`;
+- `FreeRoamEnabled`;
+- `DestinationRemainingLength` and `DestinationRemainingTime`.
+
+AI drive already filled these in; Autodrive+ now does too (`ShowOwnDriverHud`, `RefreshOwnDriverHud`).
+
+Setting `AutoDriveEnabled` also switches the player to the autodrive input context (`VehicleAutodriveContextDecisions`). The autodrive HUD listens to Accelerate, Decelerate and TurnX there, so taking over still works. The autodrive button is also watched directly (`HoldAutodrive`, hold complete). If the flag is cleared while it drives (the game's own reasons: combat, weapons, damage, quest locks), control goes back to the player.
+
+**The car's records.** Scripts can read a car's physics from its TweakDB records:
+- `Vehicle_Record.VehDriveModelData()`: `Total_mass`, `MaxWheelTurnDeg`, `BrakingFrictionFactor`, and per axle `WheelSetup().FrontPreset()/BackPreset()` with `TireFrictionCoef`, `FrictionMulLateral/Longitudinal` and `MaxBrakingTorque`;
+- `VehEngineData()`: `EngineMaxTorque`, gears, max RPM;
+- `VehWheelDimensionsSetup()`: tyre radius;
+- `Destruction().VehicleDimensions()`: the body's size;
+- `VehicleObject.GetTotalMass()`.
+
+`BCAISettings.CarData` reads them for the debug panel and the log (`Autodrive+: the car's records: ...`). How tyre friction maps to grip in g isn't known yet, so Autodrive+ doesn't use these figures yet; the driving test is for that.
+
+**Large vehicles.**
+- Autodrive+ measured its own car's length with rays and ignored hits past 4 m from the centre, so a truck came out about car-sized. The rays now reach as far as the record's size says, falling back to that size. The plugin accepts bodies up to 12 m from the centre.
+- Other vehicles in the game's list carry their record size (in the W of the forward and velocity vectors), so a truck is seen whole at once, not grown ray hit by ray hit.
+- The speed plan also caps each bend's speed by how tight the car can turn at that speed: the learned steering response, the wheel's limit at speed, 10% held back.
+- In the simulator (`BCAI_CAR=truck`: 12 m × 2.6 m, steering 0.12·steer², grip 0.76 g, city seed 7):
+  - 0.28 left 160 of 400 drives unfinished, 0.29 left 15.
+  - Most of the 0.28 failures were the harness: it read the road height from the path 6 m ahead of the car's centre, which is inside a 12 m truck, so the height never updated and the car "left" the road on the first ramp.
+  - The truck touches another car in 65 of 400 city scenes (half of them oncoming cars, at about 7 km/h), against 9–16 for the default car. It doesn't swing wide or wait for a gap in oncoming traffic before a tight turn, and the simulated oncoming cars don't brake for a body in their lane.
+
+**Lane changes for the route** start about 9 s ahead (150 m at least; before, 6 s), plus 40% for each further lane to cross. A comfortable lane change may now take up to 5 s of driving (before, at most 150 m).
+
+**Walkway pins.**
+- A quest pin at (−416, 715, 115) sits on a pavement lane of a megabuilding walkway. The nearest drivable roads are a highway at 75 m (41 m away) and streets at 46 m (52 m away). 0.28 treated its height as unknown and ended on the street 23 m from it across the ground, 69 m below. The user saw the route lead to "the edge of the bridge".
+- Pavement lanes link to each other, and that walkway joins street-level pavements about 145 m away. So for a pin on a pavement with no road on its level within 25 m, the navigator now walks the pavement network from the pin, nearest first, up to 600 m and stopping 150 m past the first road found. It offers the roads beside those pavements as ends, costed at a second a metre of walk.
+- That quest now ends 38 m from the pin, a 144 m walk along the pavements (69 m up).
+- On 300 random pins on raised pavements (`navwalk`), 102 end a walk away (102 m on average, at most 427 m); the rest have no pavement link down within 600 m and keep the old ends.
+- Ordinary trips are unchanged: identical results on 500 random trips.
+- Counting the cheapest end in the A* estimate keeps a walk's cost from widening the search. Plans to raised pins take about 30 ms.
+
+**The route guide.**
+- On foot it plans again only after you've walked 80 m from where it last planned. The 0.28 log had a plan every 2 s while walking, because on foot you are always more than 25 m off the route.
+- After a dead-end start lane (the log had "no route from lane 5282 … (1 lanes searched)"), it tries the next nearest lanes. Autodrive+ does the same.
+- The line is a ribbon about 0.35 m wide as seen (from the camera depth per segment), starting 9 m ahead of the car, fading towards 300 m, with a chevron every 24 m. It is hidden while the debug overlay draws Autodrive+'s own path.
+
+**The driving test** (*Debug tools > Driving test*, `drivetest.lua`, `BCAI_NavRandom`, `tools/drive_test.py`): see the README. It records the player and Autodrive+ on the same random route, to measure the grip the car really has; the user finds Autodrive+ far too careful in bends.
+
+**Style picker:** the autodrive button now starts with the highlighted style instead of cancelling.
+
+**Untested in game (0.29):**
+- the HUD flag and input context;
+- the car records' values, especially `VehicleDimensions` (axis order assumed: the larger of X and Y is the length);
+- the teleport, the driving test's recording, and `IsSkidding(0.3)`;
+- the ribbon line.
+
+## Grip, steering reach, the driving test and turning round (plugin 0.30)
+
+**What the first driving tests measured** (2026-10-25: Quadra Type-66 Avenger and GT, Aerondight; the player's drives):
+- Sideways acceleration (from how the velocity turns, cross-checked from the driven line's curvature) reached about 2 g, e.g. a 20 m radius at 72 km/h.
+- It grows with the body's slip angle (the car pointing into the bend): about 0.77 g at 3–6°, 1.2 g at 6–9°, 1.4–1.6 g at 9–12°, 1.7–2.0 g at 12–15°, then falls off past 20–30°. The game's cars corner hardest at 8–15° with the tyres squealing, and stay controllable.
+- At low speed they turned on a 2–5 m radius (Autodrive+ itself managed 4 m), while the learned steering fit (about 0.15·steer²) said about 7 m at full lock.
+- `IsSkidding(0.3)` is true most of the time, even under 3° of slip: no use as a slide signal.
+- `Destruction().VehicleDimensions()` gives 3 × 1 for cars 5.5 m long: not the body's size.
+- All three cars' records: tyre friction 1.0, lateral multiplier 0.90–0.93. Too little spread yet to map records to grip.
+
+**Why Autodrive+ was afraid of corners (0.29):**
+- Over 0.1 rad (5.7°) of slip counted as sliding: it slowed ("losing grip") and learned the grip down to whatever it cornered at, often 0.5–0.8 g, below the style's.
+- 0.29's steering-reach cap took that 7 m figure at its word, so a city corner of about 7 m radius fell to the cap's floor of 3 m/s (11 km/h).
+
+**0.30:**
+- Sliding is slip well past what this car's cornering needs: the slip × the car's slip stiffness (sideways acceleration per radian while gripping, learned between 2° and 9°; 86 for the sports cars) more than 1.5 × the cornering + 2 m/s², for 0.15 s; or over 0.45 rad whatever it corners at. A low-grip car is caught at a few degrees; a 2 g car at 13° isn't sliding.
+- Grip: a car new to Autodrive+ corners at up to 1 g (`kStartGrip`), rising 0.5 m/s² a second while it corners at 80% or more of that without sliding (0.1 past where it last slid), up to the style's. Where it slides, it drops to what it held there. Rising on gentle bends (half the grip) let the low-grip car climb to 1.17 g and meet a 1.3 g bend at 100 km/h.
+- Styles: City 0.7 g, Aggressive 1.3 g, Madman 1.7 g (settings version 11 moves saved values to these).
+- Steering reach: the tightest turn really seen (curvature × SpeedTurn ÷ steer^p with the wheel over half way, while gripping; rising over a second) replaces the fit's full lock when tighter. The cap applies to every vehicle again; removing it for cars made the simulated Hellhound (wide-turning) run 1 m wide at junctions.
+- Lane changes plan with the cornering grip but at most 9.3 m/s² (`kMoveLat`), as 0.29's Madman.
+- Two attempts at pursuing the path along the velocity instead of the body (raw slip, then slip smoothed over 0.4 s) made the car weave and lose the route at 90 km/h in the simulator; the slip it reads is changed by the steering itself. Not used.
+- The debug trail colours by slip angle: green under 8°, yellow 8–17°, red past 17°.
+
+**Simulator.** The car now has the game's body slip (`tan(lat/86)`) and the tests' grip: default 19 m/s², Hellhound 16, Maimai 13, truck 7.5, and `slippery` (9, below the styles). Batteries (city seeds 7 and 11, highway; 0.29 at its old style grips against 0.30), per 400 city drives:
+- City style: unchanged within noise (touches 9/15 → 6/20, off-road 25/0 → 23/51 m).
+- Madman, default car: touches 28/26 → 23/23; off-road 36/31 → 39/15 m. Aggressive: 15/16 → 18/10.
+- Hellhound: off-road 70–260 → 400–450 m, nearly all 1–2 m clips of a junction edge (under the 3 m the log reports). Truck: 80–200 → 200–330 m. Slippery car (Madman): 37/202 → 126/441 m.
+- Average speeds in the simulator barely move: its city drives are held by speed limits and traffic, and the 0.29 problems (slides at 6°, the 7 m reach) were in-game ones the old simulator didn't have.
+
+**The driving test (0.29) was broken:** it saved the route before the line had re-planned to the test's destination (the file held the route to the player's own pin), `BCAI_NavAhead` stopped at 2 km, and the minimap's GPS led to the player's pin. 0.30 saves the route once `Nav.Goal()` is the test's destination, up to 20 km; adds *New test to my map pin*; marks a random test's destination with a map pin (`MappinSystem.RegisterMappin`, `QuestStaticMappinDefinition`, `CustomPositionVariant`; untested); counts replans in the CSV header. `tools/drive_test.py` measures cornering from the velocity, re-finds the route after leaving it, compares bends only where a drive was on the route, and prints cornering against slip angle.
+
+**Turning round.** The route guide planned only from the car's lane going its way, so after a missed turn it sent the player on round the block or to a roundabout far off (the 0.29 test: 911 m → 2.7 → 3.5 → 3.8 km). `PlanTurnRound` also plans from a lane the other way within 12 m (not a highway's) and takes it when quicker by more than 15 s (`kTurnRoundTime`); the hint says *Turn round*. Only while the player drives (forward.W = 1 to `BCAI_NavPlan`), not for Autodrive+ (it can't turn round in the road) or in a driving test. `drive_sim navturn 500 3`: of 460 trips from mid-road, turning round won in 145, saving 66 s (828 m) there; 7 of 13 routes over 3× the straight line no longer were.
+
+**Own car's size:** rays from 6 m, then from 15 m if nothing is found (a truck); the record size isn't used for it any more.
+
+**Untested in game (0.30):** all of the above, the map pin for random tests, and how the in-game slip stiffness and full-lock turn are learned.

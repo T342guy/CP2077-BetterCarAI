@@ -80,8 +80,8 @@ local function styleSettings(app)
   hint("Never faster than this")
   slider(app, "Speed vs speed limit (x)", p .. "LaneSpeedFactor", 0.8, 4.0, "%.2f", true)
   hint("Each road's traffic speed times this (city roads are about 36 km/h, highways 61)")
-  slider(app, "Cornering grip (g)", p .. "CornerGrip", 0.3, 1.3, "%.2f", true)
-  hint("How hard it takes bends; it also learns the car's grip and never asks for more")
+  slider(app, "Cornering grip (g)", p .. "CornerGrip", 0.3, 2.2, "%.2f", true)
+  hint("How hard it takes bends (the game's sports cars hold about 2 g); it also learns the car's grip and never asks for more")
   slider(app, "Braking for bends (m/s2)", p .. "BrakeDecel", 2.0, 8.0, "%.1f", true)
   slider(app, "Following distance (s)", p .. "FollowTime", 0.5, 3.0, "%.1f", true)
   if ImGui.Button("Reset " .. Overlay.STYLE_NAMES[app.settings.ownStyle + 1] .. " to its defaults") then
@@ -141,8 +141,10 @@ function UI.DrawMain(app)
     styleButtons(app)
     wrappedGrey(UI.STYLE_TEXT[settings.ownStyle + 1])
     checkbox(app, "Ask which style each time it starts", "ownAskStyle", true)
-    hint("A picker appears for a few seconds: steer left/right to choose, accelerate to go, brake to cancel")
+    hint("A picker appears for a few seconds: steer left/right to choose, press the autodrive button again (or accelerate) to go, brake to cancel")
     checkbox(app, "The game's autodrive button starts Autodrive+", "ownTakeOverAutodrive")
+    checkbox(app, "Show the game's autodrive HUD while it drives", "ownGameHud")
+    hint("The wheel icon on the minimap and the side panel with distance and time left")
     if ImGui.CollapsingHeader(Overlay.STYLE_NAMES[settings.ownStyle + 1] .. " settings") then
       styleSettings(app)
     end
@@ -267,7 +269,7 @@ function UI.DrawPicker(app)
     if picker.phase == "release" then
       ImGui.TextColored(1, 0.85, 0.4, 1, "Let go of the controls to start...")
     else
-      grey(string.format("Steer left/right to choose - accelerate to start - brake to cancel - starts in %d s",
+      grey(string.format("Steer left/right to choose - autodrive button (G) again to start - brake to cancel - starts in %d s",
         math.max(1, math.ceil(picker.left))))
     end
   end
@@ -563,6 +565,54 @@ local function drawResearchTab(app)
   for _, line in ipairs(state.controlTestReport or {}) do ImGui.Text(line) end
 end
 
+local TEST_PHASES = {
+  ready = "Route ready: drive it (recording starts as you drive off)",
+  player = "Recording your drive...",
+  driven = "Your drive is saved",
+  placing = "Putting the car back at the start...",
+  ai = "Recording Autodrive+'s drive...",
+  done = "Both drives saved",
+}
+
+local function drawDriveTestTab(app)
+  local Test = app.driveTest
+  local test = Test.Get()
+  wrappedGrey("You drive a route, then Autodrive+ drives the same route from the same start. Both drives "
+    .. "are recorded, so we can compare how fast each took the bends, how hard each braked, and how much grip "
+    .. "the car really has. Send the test_*.txt and test_*.csv files from this mod's folder.")
+  ImGui.Spacing()
+  if not test then
+    if ImGui.Button("New test to my map pin") then app.state.testError = Test.NewToPin() end
+    hint("Put a pin on the map past the bends you want to compare, then press this. The game's GPS shows the way.")
+    if ImGui.Button("Random route (1-2 km)") then app.state.testError = Test.New(700, 1500) end
+    ImGui.SameLine()
+    if ImGui.Button("Longer (2-4 km)") then app.state.testError = Test.New(1500, 3000) end
+    hint("Follow the yellow line to the marker; the minimap's GPS still shows the way to your own pin, if you have one.")
+    if app.state.testError then ImGui.TextColored(1, 0.5, 0.4, 1, app.state.testError) end
+    hint("Stop on an ordinary road first. Recording starts as you drive off.")
+    return
+  end
+  ImGui.Text("Test " .. test.id)
+  ImGui.TextColored(1, 0.85, 0.4, 1, TEST_PHASES[test.phase] or test.phase)
+  local summary = app.nav.Summary()
+  if summary then wrappedGrey("Route: " .. summary) end
+  if test.run then
+    ImGui.Text(string.format("%.0f s, %d rows%s", test.run.t, #test.run.rows,
+      test.run.replans > 0 and string.format(", off the route %d times", test.run.replans) or ""))
+    if ImGui.Button("Stop and save") then Test.Stop() end
+  elseif test.phase == "driven" or test.phase == "done" then
+    styleButtons(app)
+    if ImGui.Button("Let Autodrive+ drive it") then app.state.testError = Test.RunAI() end
+    hint("Puts the car back at the start, then Autodrive+ drives the route in the style chosen")
+  end
+  if app.state.testError then ImGui.TextColored(1, 0.5, 0.4, 1, app.state.testError) end
+  for _, name in ipairs(test.saved) do grey("saved " .. name) end
+  if ImGui.Button("End the test") then
+    Test.Clear()
+    app.state.testError = nil
+  end
+end
+
 function UI.DrawTools(app)
   window(app, "Better Car AI: debug tools", "uiDebugWindow", function()
     if ImGui.BeginTabBar("bcai_debug_tabs") then
@@ -571,6 +621,7 @@ function UI.DrawTools(app)
       tab("Recorder & log", drawRecorderTab, app)
       tab("Vehicle", drawVehicleTab, app)
       tab("Lanes & routes", drawLanesTab, app)
+      tab("Driving test", drawDriveTestTab, app)
       tab("Research", drawResearchTab, app)
       ImGui.EndTabBar()
     end

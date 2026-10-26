@@ -10,4 +10,5 @@ av=$(echo "$out" | grep -o "average [0-9]* km/h")
 offr=$(echo "$out" | grep -o "off the road: [0-9]* m, [0-9]* moves of 2 m\( or more, [0-9]* changes of mind\)\?")
 first=$(echo "$out" | grep -m1 "contact with" | sed 's/^ *! //')
 dig=$(echo "$out" | grep -o "digest [0-9a-f]*")
-echo "$label | $st | $oc | $av | $offr | $first${dig:+ | $dig}"
+ped=$(echo "$out" | grep -o "pedals: travel [0-9.]* per min, hard brake [0-9.]* s per min, [0-9]* quick flips")
+echo "$label | $st | $oc | $av | $offr | $first${dig:+ | $dig}${ped:+ | $ped}"

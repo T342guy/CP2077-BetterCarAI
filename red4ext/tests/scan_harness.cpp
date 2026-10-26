@@ -244,19 +244,28 @@ static int DriveDump(const char* aPath, float x0, float y0, float hx, float hy, 
     float hl = std::hypot(hx, hy);
     float psi = std::atan2(hy / hl, hx / hl);
     // This car: BCAI_CAR="length,width,grip,acceleration scale,top speed[,steerK,steerP,brakeK,brakeP]"
-    // (m, m/s^2, m/s), or a preset: "hellhound" (long, wide, heavy, grippy,
-    // turns wide) or "maimai" (tiny, turns tightly, slow, accelerates weakly).
+    // (m, m/s^2, m/s), or a preset: "hellhound" (long, wide, heavy, turns
+    // wide), "maimai" (tiny, turns tightly, slow, accelerates weakly),
+    // "truck" (12 m long) or "slippery" (the default car with half its grip:
+    // less than the styles ask for, so Autodrive+ has to learn it). Grip as
+    // the driving tests measured it (0.29): the sports cars about 2 g.
     struct SimCar
     {
-        float length = 4.6f, width = 1.9f, grip = 9.0f, accel = 1.0f, top = 99.0f;
+        float length = 4.6f, width = 1.9f, grip = 19.0f, accel = 1.0f, top = 99.0f;
         float steerK = 0.17f, steerP = 2.0f, brakeK = 8.0f, brakeP = 0.3f;
     } car;
     if (const char* e = getenv("BCAI_CAR"))
     {
         if (!strcmp(e, "hellhound"))
-            car = {5.8f, 2.4f, 10.0f, 0.75f, 55.0f, 0.12f, 2.0f, 6.5f, 0.35f};
+            car = {5.8f, 2.4f, 16.0f, 0.75f, 55.0f, 0.12f, 2.0f, 6.5f, 0.35f};
         else if (!strcmp(e, "maimai"))
-            car = {3.1f, 1.55f, 6.5f, 0.5f, 33.0f, 0.26f, 2.0f, 8.5f, 0.3f};
+            car = {3.1f, 1.55f, 13.0f, 0.5f, 33.0f, 0.26f, 2.0f, 8.5f, 0.3f};
+        else if (!strcmp(e, "truck"))
+            // (A long truck, like the five-axle ones in Dogtown: slow to speed
+            // up and to stop, turns wide, grips less.)
+            car = {12.0f, 2.6f, 7.5f, 0.45f, 30.0f, 0.12f, 2.0f, 5.5f, 0.4f};
+        else if (!strcmp(e, "slippery"))
+            car = {4.6f, 1.9f, 9.0f, 1.0f, 99.0f, 0.17f, 2.0f, 8.0f, 0.3f};
         else
             sscanf(e, "%f,%f,%f,%f,%f,%f,%f,%f,%f", &car.length, &car.width, &car.grip, &car.accel, &car.top,
                    &car.steerK, &car.steerP, &car.brakeK, &car.brakeP);
@@ -380,17 +389,25 @@ static int DriveDump(const char* aPath, float x0, float y0, float hx, float hy, 
     if (const char* e = getenv("BCAI_STYLE"))
     {
         if (!strcmp(e, "city"))
-            set = {110.0f / 3.6f, 0.6f * 9.81f, 1.3f, 3.0f, 2.0f, 0, 0};
+            set = {110.0f / 3.6f, 0.7f * 9.81f, 1.3f, 3.0f, 2.0f, 0, 0};
         else if (!strcmp(e, "aggressive"))
-            set = {180.0f / 3.6f, 0.8f * 9.81f, 2.2f, 4.0f, 1.5f, 0, 1};
+            set = {180.0f / 3.6f, 1.3f * 9.81f, 2.2f, 4.0f, 1.5f, 0, 1};
         else if (!strcmp(e, "madman"))
-            set = {250.0f / 3.6f, 0.95f * 9.81f, 3.0f, 5.0f, 0.8f, 0, 2};
+            set = {250.0f / 3.6f, 1.7f * 9.81f, 3.0f, 5.0f, 0.8f, 0, 2};
     }
+    // BCAI_GRIP=g: the style's cornering grip instead.
+    if (const char* e = getenv("BCAI_GRIP"))
+        set.latAccel = float(atof(e)) * 9.81f;
     const float dt = 1.0f / 60.0f;
     float v = 0.0f, delta = 0.0f, t = 0.0f, maxLat = 0.0f, maxErr = 0.0f, sumErr = 0.0f, dist = 0.0f;
     float maxSpeed = 0.0f, closest = 1e9f;
     int steps = 0, state = 0, pedalSwitches = 0;
     float jerkSum = 0.0f, steerRate = 0.0f;
+    // Pedal smoothness: how far the pedals moved, time on a hard brake
+    // (0.5 or more: 6.5 m/s^2 in this car), and quick flips (a pedal held
+    // under a second before the other).
+    float pedalTravel = 0.0f, hardBrake = 0.0f, pedalHeld = 0.0f, lastThr = 0.0f, lastBrk = 0.0f;
+    int quickFlips = 0;
     uint64_t digest = 1469598103934665603ull;
     float slide = 0.0f; // sideways drift when out of grip (left +)
     float offRoad = 0.0f;
@@ -566,8 +583,9 @@ static int DriveDump(const char* aPath, float x0, float y0, float hx, float hy, 
                    hitCount, seen, oc.x, oc.y, std::hypot(oc.x - pos.x, oc.y - pos.y),
                    tele.substr(0, tele.find(" | off")).c_str());
         }
-        // Where the road is under the car (keeps z on the route).
-        auto ahead = BCAI::DriverAhead(6.0f, 1.0f);
+        // Where the road is under the car (keeps z on the route): the path
+        // just past its front (far enough out for a long truck's).
+        auto ahead = BCAI::DriverAhead(20.0f, 1.0f);
         if (!ahead.empty())
             pos.z = ahead.front().z;
         if (!running)
@@ -586,7 +604,9 @@ static int DriveDump(const char* aPath, float x0, float y0, float hx, float hy, 
         brk += (out.brake - brk) * std::min(1.0f, dt / 0.15f);
         float curv = std::copysign(simK * std::pow(std::fabs(delta), simP), delta) / (1.0f + (v / 25.0f) * (v / 25.0f));
         float r = v * curv;
-        // Out of grip: it turns no more than the grip allows and drifts wide
+        // Cornering, the body points into the bend, more the harder it
+        // corners (as in the game: about 7 degrees at 1 g, 13 at 2 g). Out of
+        // grip it turns no more than the grip allows and drifts wide
         // (sideways, away from the turn) the more it asks for.
         slide = 0.0f;
         if (std::fabs(v * r) > car.grip)
@@ -595,6 +615,7 @@ static int DriveDump(const char* aPath, float x0, float y0, float hx, float hy, 
             slide = -std::copysign(std::min(over, 0.6f) * 0.35f * v, r);
             r = std::copysign(car.grip / std::max(std::fabs(v), 0.1f), r);
         }
+        slide -= std::copysign(std::tan(std::fabs(v * r) / 86.0f) * std::fabs(v), r);
         maxLat = std::max(maxLat, std::fabs(v * r));
         float a = thr * car.accel * std::max(1.0f, 3.8f - 0.11f * v) * std::clamp(1.0f - std::pow(v / car.top, 3.0f), 0.0f, 1.0f) -
                   0.3f - 0.0006f * v * v;
@@ -607,8 +628,19 @@ static int DriveDump(const char* aPath, float x0, float y0, float hx, float hy, 
         static int lastPedal = 0;
         int pedal = out.brake > 0.05f ? -1 : out.throttle > 0.05f ? 1 : lastPedal;
         if (pedal != lastPedal && lastPedal != 0)
+        {
             ++pedalSwitches;
+            if (pedalHeld < 1.0f)
+                ++quickFlips;
+        }
+        pedalHeld = pedal != lastPedal ? 0.0f : pedalHeld + dt;
         lastPedal = pedal;
+        if (steps > 0)
+            pedalTravel += std::fabs(out.throttle - lastThr) + std::fabs(out.brake - lastBrk);
+        lastThr = out.throttle;
+        lastBrk = out.brake;
+        if (out.brake >= 0.5f && v > 0.5f)
+            hardBrake += dt;
         static float lastA = 0.0f, lastSteer = 0.0f;
         jerkSum += steps > 0 ? std::fabs(a - lastA) : 0.0f;
         steerRate += std::fabs(out.steer - lastSteer);
@@ -655,6 +687,8 @@ static int DriveDump(const char* aPath, float x0, float y0, float hx, float hy, 
            dist / std::max(t, 1.0f) * 3.6f, maxSpeed * 3.6f, maxErr, sumErr / std::max(steps, 1), maxLat);
     printf("  smoothness: %d switches between throttle and brake, jerk %.2f m/s^3 on average, steering moved %.3f/s\n",
            pedalSwitches, jerkSum / std::max(t, 1.0f), steerRate / std::max(t, 1.0f));
+    printf("  pedals: travel %.2f per min, hard brake %.2f s per min, %d quick flips\n",
+           pedalTravel * 60.0f / std::max(t, 1.0f), hardBrake * 60.0f / std::max(t, 1.0f), quickFlips);
     printf("  off the road: %.0f m, %d moves of 2 m or more, %d changes of mind\n", offRoad, BCAI::DriverBigMoves(),
            BCAI::DriverDithers());
     if (haveObstacle)
@@ -804,6 +838,140 @@ static int NavDump(const char* aPath, int aTrips, unsigned aSeed)
     return 0;
 }
 
+// Pins on raised pavements (no road on their level within 25 m: walkways in
+// megabuildings, bridges): how the navigator ends there. scan_harness
+// lanegraph.txt navwalk N [seed]
+static int NavWalk(const char* aPath, int aTrips, unsigned aSeed)
+{
+    using namespace BCAI::Autodrive;
+    using BCAI::Point3;
+    if (!LoadDump(aPath))
+        return 1;
+    const BCAI::LaneGraph& graph = BCAI::Lanes();
+    GeoCache geo;
+    std::mt19937 rng(aSeed);
+    std::vector<uint32_t> roads, raised;
+    for (uint32_t i = 0; i < graph.Count(); ++i)
+    {
+        uint16_t f = graph.Flags(i);
+        if (Drivable(f) && !(f & (BCAI::kLaneIntersection | BCAI::kLaneNoAutodrive | BCAI::kLaneHighway)) &&
+            geo.Get(graph, i).Length() > 30.0f)
+            roads.push_back(i);
+        if ((f & BCAI::kLanePavement) && geo.Get(graph, i).Length() > 10.0f)
+        {
+            Point3 mid = geo.Get(graph, i).At(geo.Get(graph, i).Length() / 2);
+            bool level = false;
+            for (uint32_t o : graph.Near(mid.x, mid.y, 25.0f))
+            {
+                const LaneGeo& go = geo.Get(graph, o);
+                float d;
+                Point3 od;
+                float s = go.Project(mid.x, mid.y, d, od);
+                level = level || (Drivable(graph.Flags(o)) && d <= 25.0f && std::fabs(go.At(s).z - mid.z) <= 3.0f);
+            }
+            if (!level)
+                raised.push_back(i);
+        }
+    }
+    printf("%zu raised pavements\n", raised.size());
+    int routed = 0, walked = 0;
+    double walk = 0, gap = 0, time = 0;
+    float most = 0;
+    for (int trip = 0; trip < aTrips; ++trip)
+    {
+        uint32_t a = roads[rng() % roads.size()], b = raised[rng() % raised.size()];
+        Spot start{a, geo.Get(graph, a).Length() / 2, 0.0f};
+        Point3 goal = geo.Get(graph, b).At(geo.Get(graph, b).Length() * float(rng() % 100) / 100.0f);
+        Route route;
+        if (!PlanRoute(graph, geo, start, goal, RouteOptions{}, route))
+            continue;
+        ++routed;
+        gap += route.endGap;
+        time += route.time;
+        if (route.endWalk >= 0.0f)
+        {
+            ++walked;
+            walk += route.endWalk;
+            most = std::max(most, route.endWalk);
+        }
+        if (getenv("BCAI_NAV_SHOW"))
+            printf("  pin (%.0f, %.0f, %.0f): %s\n", goal.x, goal.y, goal.z, DescribeRoute(route).c_str());
+    }
+    printf("%d trips, %d routed, %d end a walk away (%.0f m on average, at most %.0f m), %.0f m from the pin and %.0f s "
+           "on average\n", aTrips, routed, walked, walked ? walk / walked : 0.0, most, routed ? gap / routed : 0.0,
+           routed ? time / routed : 0.0);
+    return 0;
+}
+
+// Turning round (the route guide, 0.30): random trips from the middle of an
+// ordinary road lane, facing along it, planned on from there and with the
+// option of turning round first. How often turning round wins, and what it
+// saves. scan_harness lanegraph.txt navturn trips [seed]
+static int NavTurn(const char* aPath, int aTrips, unsigned aSeed)
+{
+    using namespace BCAI::Autodrive;
+    using BCAI::Point3;
+    if (!LoadDump(aPath))
+        return 1;
+    const BCAI::LaneGraph& graph = BCAI::Lanes();
+    GeoCache geo;
+    std::mt19937 rng(aSeed);
+    std::vector<uint32_t> roads;
+    for (uint32_t i = 0; i < graph.Count(); ++i)
+    {
+        uint16_t f = graph.Flags(i);
+        if (Drivable(f) && !(f & (BCAI::kLaneIntersection | BCAI::kLaneNoAutodrive | BCAI::kLaneHighway)) &&
+            geo.Get(graph, i).Length() > 30.0f)
+            roads.push_back(i);
+    }
+    int both = 0, turned = 0, onlyBack = 0, long3 = 0, long3Fixed = 0;
+    double savedTime = 0, savedLen = 0, fwdTime = 0, bestTime = 0;
+    for (int trip = 0; trip < aTrips; ++trip)
+    {
+        uint32_t a = roads[rng() % roads.size()], b = roads[rng() % roads.size()];
+        const LaneGeo& ga = geo.Get(graph, a);
+        float s0 = ga.Length() / 2;
+        Point3 pos = ga.At(s0), p1 = ga.At(s0 + 2.0f), p0 = ga.At(s0 - 2.0f);
+        float hl = std::max(std::hypot(p1.x - p0.x, p1.y - p0.y), 0.01f);
+        Point3 fwd{(p1.x - p0.x) / hl, (p1.y - p0.y) / hl, 0.0f};
+        Point3 goal = geo.Get(graph, b).At(geo.Get(graph, b).Length() / 2);
+        float straight = std::hypot(goal.x - pos.x, goal.y - pos.y);
+        if (straight < 200.0f)
+            continue;
+        Route fwdRoute;
+        bool planned = PlanRoute(graph, geo, Spot{a, s0, 0.0f}, goal, RouteOptions{}, fwdRoute);
+        Route best = fwdRoute;
+        bool any = PlanTurnRound(graph, geo, pos, fwd, goal, best, planned);
+        if (!any)
+            continue;
+        if (!planned)
+        {
+            ++onlyBack;
+            continue;
+        }
+        ++both;
+        fwdTime += fwdRoute.time;
+        bestTime += best.time;
+        bool longWay = fwdRoute.length > 3.0f * straight;
+        long3 += longWay;
+        if (best.turnAround)
+        {
+            ++turned;
+            savedTime += fwdRoute.time - best.time;
+            savedLen += fwdRoute.length - best.length;
+            long3Fixed += longWay && best.length <= 3.0f * straight;
+            if (getenv("BCAI_NAV_SHOW"))
+                printf("  from (%.0f, %.0f) to (%.0f, %.0f), %.0f m apart: on %.0f m %.0f s; turning round %.0f m %.0f s\n",
+                       pos.x, pos.y, goal.x, goal.y, straight, fwdRoute.length, fwdRoute.time, best.length, best.time);
+        }
+    }
+    printf("%d trips planned both ways (%d only by turning round): turning round chosen in %d, saving %.0f s and %.0f m "
+           "on average there; %d went over 3x the straight line, %d of them no longer; all trips %.0f s -> %.0f s on "
+           "average\n", both, onlyBack, turned, turned ? savedTime / turned : 0.0, turned ? savedLen / turned : 0.0, long3,
+           long3Fixed, both ? fwdTime / both : 0.0, both ? bestTime / both : 0.0);
+    return 0;
+}
+
 // One trip, both planners, every leg: scan_harness lanegraph.txt navone x0 y0 hx hy x1 y1
 static int NavOne(const char* aPath, float x0, float y0, float hx, float hy, float x1, float y1)
 {
@@ -822,6 +990,9 @@ static int NavOne(const char* aPath, float x0, float y0, float hx, float hy, flo
     Point3 pos{x0, y0, 0.0f}, fwd{hx / hl, hy / hl, 0.0f}, goal{x1, y1, 0.0f};
     pos.z = height(x0, y0);
     goal.z = height(x1, y1);
+    // (BCAI_GOAL_Z: the pin's own height, as the game gives it.)
+    if (const char* z = getenv("BCAI_GOAL_Z"))
+        goal.z = float(atof(z));
     Spot start;
     if (!FindLane(graph, geo, pos, &fwd, 15.0f, start))
         return printf("no lane under the start\n"), 1;
@@ -848,6 +1019,8 @@ int main(int argc, char** argv)
     // scenes' cars are placed along its routes).
     if (getenv("BCAI_ROUTES") && !strcmp(getenv("BCAI_ROUTES"), "0.27"))
         BCAI::Autodrive::gPlanOverride = &OldNav::Plan;
+    if (argc > 3 && std::strcmp(argv[2], "navwalk") == 0)
+        return NavWalk(argv[1], atoi(argv[3]), argc > 4 ? unsigned(atoi(argv[4])) : 1u);
     // scan_harness lanegraph.txt drive x0 y0 hx hy [x1 y1 | cruise] [stopAt]
     if (argc > 6 && std::strcmp(argv[2], "drive") == 0)
     {
@@ -860,6 +1033,8 @@ int main(int argc, char** argv)
     if (argc > 8 && std::strcmp(argv[2], "navone") == 0)
         return NavOne(argv[1], float(atof(argv[3])), float(atof(argv[4])), float(atof(argv[5])), float(atof(argv[6])),
                       float(atof(argv[7])), float(atof(argv[8])));
+    if (argc > 3 && std::strcmp(argv[2], "navturn") == 0)
+        return NavTurn(argv[1], atoi(argv[3]), argc > 4 ? unsigned(atoi(argv[4])) : 1u);
     // scan_harness lanegraph.txt nav trips [seed]
     if (argc > 3 && std::strcmp(argv[2], "nav") == 0)
         return NavDump(argv[1], atoi(argv[3]), argc > 4 ? unsigned(atoi(argv[4])) : 1u);

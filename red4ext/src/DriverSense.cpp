@@ -228,11 +228,12 @@ size_t Driver::Sense(const std::vector<Point3>& aEnds, const std::vector<bool>& 
 
 void Driver::SetBody(float aFront, float aRear, float aHalfWidth)
 {
-    if (aFront > 0.5f && aFront < 8.0f)
+    // (Up to a long truck's: 12 m from its centre, 1.8 m to a side.)
+    if (aFront > 0.5f && aFront < 12.0f)
         mFront = aFront;
-    if (aRear > 0.5f && aRear < 8.0f)
+    if (aRear > 0.5f && aRear < 12.0f)
         mRear = aRear;
-    if (aHalfWidth > 0.3f && aHalfWidth < 2.0f)
+    if (aHalfWidth > 0.3f && aHalfWidth < 1.8f)
         mHalfWidth = aHalfWidth + 0.05f;
 }
 
@@ -288,6 +289,14 @@ size_t Driver::SetVehicles(const std::vector<DriverVehicle>& aList)
         k.listed = mClock;
         k.parked = v.parked;
         k.bike = v.bike;
+        // Its size as its record gives it: a truck is far longer than the
+        // car it is first taken for (the rays only grow it bit by bit).
+        if (v.length > 1.0f && v.width > 0.5f)
+        {
+            k.front = std::max(k.front, std::min(0.5f * v.length, 12.0f));
+            k.rear = std::max(k.rear, std::min(0.5f * v.length, 12.0f));
+            k.half = std::max(k.half, std::min(0.5f * v.width, 1.6f));
+        }
         if (std::hypot(k.vel.x, k.vel.y) > 0.5f)
             k.stillSince = -1.0f;
         else if (k.stillSince < 0.0f)
@@ -324,8 +333,8 @@ int Driver::Absorb(const Point3& aHit)
     if (best >= 0 && need > 0.0f)
     {
         Known& kn = mKnown[best];
-        kn.front = std::min(std::max(kn.front, bx + 0.05f), 9.0f);
-        kn.rear = std::min(std::max(kn.rear, -bx + 0.05f), 9.0f);
+        kn.front = std::min(std::max(kn.front, bx + 0.05f), 12.0f);
+        kn.rear = std::min(std::max(kn.rear, -bx + 0.05f), 12.0f);
         kn.half = std::min(std::max(kn.half, std::fabs(by) + 0.05f), 1.6f);
     }
     return best;

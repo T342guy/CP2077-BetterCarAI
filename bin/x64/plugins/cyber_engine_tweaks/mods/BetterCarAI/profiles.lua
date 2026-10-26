@@ -4,8 +4,9 @@
 -- (drivingParamsGeneric / drivingParamsAutodrive / drivingParamsRace). Those
 -- point at sub-records the native driver reads: vision (look-ahead, speed
 -- limit, lateral avoidance), traction (how much grip the AI assumes) and
--- boostStats (torque/grip assist). TweakXL isn't available on 2.5, so we clone
--- and edit these through CET's TweakDB API instead.
+-- boostStats (torque/grip assist). We clone and edit these through CET's
+-- TweakDB API at runtime (written before TweakXL supported 2.5; it works
+-- without TweakXL either way).
 
 local Profiles = {}
 

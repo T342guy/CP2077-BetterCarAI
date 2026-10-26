@@ -8,10 +8,14 @@
 // the lanes around the destination, each with a cost for how far from the
 // destination it ends, so the route goes to the lane that is quickest to
 // reach and nearest the pin together, not to the nearest lane come what may.
+// A pin on a pavement with no road on its level (a walkway high up in a
+// megabuilding) ends where the walk along the pavements to it is short.
 
 #include "Navigator.hpp"
 
+#include <mutex>
 #include <queue>
+#include <tuple>
 
 namespace BCAI::Autodrive
 {
@@ -196,14 +200,168 @@ bool FindLane(const LaneGraph& aGraph, GeoCache& aGeo, const Point3& aPos, const
     return true;
 }
 
+bool PlanTurnRound(const LaneGraph& aGraph, GeoCache& aGeo, const Point3& aPos, const Point3& aFwd,
+                   const Point3& aGoal, Route& aRoute, bool aPlanned)
+{
+    Point3 back{-aFwd.x, -aFwd.y, 0.0f};
+    int tried = 0;
+    for (const Spot& s : FindLanes(aGraph, aGeo, aPos, &back, 12.0f))
+    {
+        if (s.dist > 12.0f || (aGraph.Flags(s.lane) & kLaneHighway))
+            continue;
+        if (++tried > 2)
+            break;
+        Route other;
+        if (PlanRoute(aGraph, aGeo, s, aGoal, RouteOptions{}, other) &&
+            (!aPlanned || other.time + kTurnRoundTime < aRoute.time))
+        {
+            other.turnAround = true;
+            other.time += kTurnRoundTime;
+            other.turns.insert(other.turns.begin(), {0.0f, kPi, Manoeuvre::kUTurn, false, s.lane});
+            aRoute = std::move(other);
+            return true;
+        }
+    }
+    return aPlanned;
+}
+
 namespace
 {
-// A lane the route may end on, and what ending there costs.
+// A lane the route may end on, and what ending there costs. walk: the walk
+// along the pavements from there to the pin (< 0: none, it ends by the pin).
 struct End
 {
     Spot spot;
     float gap, dz, cost;
+    float walk = -1.0f;
 };
+
+// Walks further than this (m) from the road to the pin don't count.
+constexpr float kWalkMax = 600.0f;
+
+// The pavements' links both ways (people walk them either way): per lane,
+// the lane it meets, where on this one and where on that one.
+struct WalkLink
+{
+    uint32_t lane;
+    float here, there;
+};
+
+const std::vector<std::vector<WalkLink>>& PavementLinks(const LaneGraph& aGraph)
+{
+    static std::mutex mutex;
+    static uintptr_t data = 0;
+    static uint32_t count = 0;
+    static std::vector<std::vector<WalkLink>> links;
+    std::lock_guard lock(mutex);
+    if (data != aGraph.Data() || count != aGraph.Count())
+    {
+        data = aGraph.Data();
+        count = aGraph.Count();
+        links.assign(count, {});
+        for (uint32_t u = 0; u < count; ++u)
+        {
+            if (!(aGraph.Flags(u) & kLanePavement))
+                continue;
+            uint32_t n;
+            const LaneOut* outs = aGraph.Outs(u, n);
+            for (uint32_t k = 0; k < n; ++k)
+            {
+                uint32_t v = outs[k].Lane();
+                if (v >= count || !(aGraph.Flags(v) & kLanePavement))
+                    continue;
+                links[u].push_back({v, outs[k].at, outs[k].into});
+                links[v].push_back({u, outs[k].into, outs[k].at});
+            }
+        }
+    }
+    return links;
+}
+
+// The roads the pin can be walked to from: from the pavement the pin is on,
+// along the pavements linked to it, the drivable lanes beside them (on the
+// pavement's level). The walk is the cost. Empty when the pin isn't on a
+// pavement.
+std::vector<End> WalkEnds(const LaneGraph& aGraph, GeoCache& aGeo, const Point3& aGoal)
+{
+    std::vector<End> out;
+    uint32_t start = UINT32_MAX;
+    float startS = 0.0f, startD = 8.0f;
+    for (uint32_t lane : aGraph.Near(aGoal.x, aGoal.y, 10.0f))
+    {
+        if (!(aGraph.Flags(lane) & kLanePavement))
+            continue;
+        const LaneGeo& geo = aGeo.Get(aGraph, lane);
+        if (geo.pts.size() < 2)
+            continue;
+        float d;
+        Point3 dir{};
+        float s = geo.Project(aGoal.x, aGoal.y, d, dir);
+        if (d < startD && std::fabs(geo.At(s).z - aGoal.z) <= 3.0f)
+        {
+            start = lane;
+            startS = s;
+            startD = d;
+        }
+    }
+    if (start == UINT32_MAX)
+        return out;
+    // Walking out from the pin, nearest first: the roads beside each
+    // pavement reached (the shortest walk to each road), until the walk is
+    // well past the shortest one to any road.
+    const auto& links = PavementLinks(aGraph);
+    std::unordered_map<uint32_t, size_t> onLane;
+    std::unordered_map<uint32_t, bool> done;
+    float limit = kWalkMax;
+    using Item = std::tuple<float, uint32_t, float>;
+    std::priority_queue<Item, std::vector<Item>, std::greater<Item>> open;
+    open.push({startD, start, startS});
+    while (!open.empty())
+    {
+        auto [walked, u, at] = open.top();
+        open.pop();
+        if (walked > limit)
+            break;
+        if (!done.emplace(u, true).second)
+            continue;
+        const LaneGeo& geo = aGeo.Get(aGraph, u);
+        for (float s = 0.0f; s <= geo.Length() + 3.9f; s += 8.0f)
+        {
+            float along = std::min(s, geo.Length()), walk = walked + std::fabs(along - at);
+            if (walk > limit)
+                continue;
+            Point3 p = geo.At(along);
+            for (uint32_t lane : aGraph.Near(p.x, p.y, 12.0f))
+            {
+                if (!Drivable(aGraph.Flags(lane)))
+                    continue;
+                const LaneGeo& road = aGeo.Get(aGraph, lane);
+                if (road.pts.size() < 2)
+                    continue;
+                float d;
+                Point3 dir{};
+                float rs = road.Project(p.x, p.y, d, dir);
+                Point3 q = road.At(rs);
+                if (d > 12.0f || std::fabs(q.z - p.z) > 3.0f)
+                    continue;
+                End e{{lane, rs, Dist2(q, aGoal)}, Dist2(q, aGoal), q.z - aGoal.z, 0.0f, walk + d};
+                limit = std::min(limit, e.walk + 150.0f);
+                auto it = onLane.find(lane);
+                if (it == onLane.end())
+                {
+                    onLane[lane] = out.size();
+                    out.push_back(e);
+                }
+                else if (e.walk < out[it->second].walk)
+                    out[it->second] = e;
+            }
+        }
+        for (const WalkLink& l : links[u])
+            if (float nd = walked + std::fabs(l.here - at); nd <= limit && !done.count(l.lane))
+                open.push({nd, l.lane, l.there});
+    }
+    return out;
+}
 
 // The lanes around the destination, and what ending on each costs: how far
 // it is from the pin, and whether it is on the pin's level (a pin far above
@@ -237,9 +395,18 @@ std::vector<End> Ends(const LaneGraph& aGraph, GeoCache& aGeo, const Point3& aGo
         nearestDz = std::min(nearestDz, std::fabs(e.dz));
         nearestGap = std::min(nearestGap, e.gap);
     }
+    // A pin on a pavement with no road on its level close by: end where the
+    // walk to it is short (its height is real: the pavement's).
+    bool roadOnLevel = false;
+    for (const End& e : ends)
+        roadOnLevel = roadOnLevel || (e.gap <= 25.0f && std::fabs(e.dz) <= 3.0f);
+    std::vector<End> walks;
+    if (!roadOnLevel)
+        walks = WalkEnds(aGraph, aGeo, aGoal);
     // Without a height, the pin is taken to be on the lowest road right by it
     // (only the nearest ones: streets slope).
-    aHeightKnown = nearestDz <= 6.0f;
+    aHeightKnown = nearestDz <= 6.0f || !walks.empty();
+    ends.insert(ends.end(), walks.begin(), walks.end());
     float base = 0.0f;
     if (!aHeightKnown)
     {
@@ -257,8 +424,10 @@ std::vector<End> Ends(const LaneGraph& aGraph, GeoCache& aGeo, const Point3& aGo
         uint16_t flags = aGraph.Flags(e.spot.lane);
         // Seconds it is worth driving to end nearer the pin: a little for the
         // first 40 m, then a lot.
-        float cost = 0.6f * std::min(e.gap, 40.0f) + 2.0f * std::max(e.gap - 40.0f, 0.0f) +
-                     (off > 0.0f ? 45.0f + 4.0f * off : 0.0f);
+        // (Ending a walk away: a second a metre.)
+        float cost = e.walk >= 0.0f ? e.walk
+                                    : 0.6f * std::min(e.gap, 40.0f) + 2.0f * std::max(e.gap - 40.0f, 0.0f) +
+                                          (off > 0.0f ? 45.0f + 4.0f * off : 0.0f);
         // A highway is no place to stop, unless the pin is on it.
         if ((flags & kLaneHighway) && !(e.gap < 8.0f && off <= 0.0f))
             cost += 25.0f;
@@ -298,7 +467,12 @@ bool PlanRoute(const LaneGraph& aGraph, GeoCache& aGeo, const Spot& aStart, cons
             len *= 3.0f;
         return fastest ? len / LaneSpeed(aGraph, u) : len;
     };
-    auto estimate = [&](const Point3& p) { return fastest ? Dist2(p, aGoal) / kTopSpeed : Dist2(p, aGoal); };
+    // Every route pays at least the cheapest end (a walk away, that can be
+    // minutes): counting it lets the search stop that much sooner.
+    float leastEnd = 1e30f;
+    for (const End& e : ends)
+        leastEnd = std::min(leastEnd, e.cost);
+    auto estimate = [&](const Point3& p) { return (fastest ? Dist2(p, aGoal) / kTopSpeed : Dist2(p, aGoal)) + leastEnd; };
     // The estimate has to stay under the real cost left: ending away from the
     // pin is never cheaper than driving there (0.6 s/m against 1/27).
 
@@ -370,6 +544,7 @@ bool PlanRoute(const LaneGraph& aGraph, GeoCache& aGeo, const Spot& aStart, cons
     aOut.end = end.spot;
     aOut.endGap = end.gap;
     aOut.endDz = end.dz;
+    aOut.endWalk = end.walk;
 
     Measure(aGraph, aGeo, aOut);
     return true;
@@ -510,10 +685,16 @@ std::string DescribeRoute(const Route& aRoute)
         if (counts[kind])
             turns += Format("%s%d %s", turns.empty() ? "" : ", ", counts[kind], ManoeuvreName(kind));
     std::string end = Format("ends %.0f m from the destination", aRoute.endGap);
-    if (std::fabs(aRoute.endDz) >= 2.0f)
+    if (aRoute.endWalk >= 0.0f)
+        end += Format(", a %.0f m walk along the pavements%s", aRoute.endWalk,
+                      std::fabs(aRoute.endDz) >= 2.0f
+                          ? Format(" (%.0f m %s)", std::fabs(aRoute.endDz), aRoute.endDz > 0 ? "down" : "up").c_str()
+                          : "");
+    else if (std::fabs(aRoute.endDz) >= 2.0f)
         end += aRoute.heightKnown ? Format(", %.0f m %s it", std::fabs(aRoute.endDz), aRoute.endDz > 0 ? "above" : "below")
                                   : " (its height unknown: the street level)";
-    return Format("%.0f m, about %d min %02d s, %d junctions%s%s%s, %s", aRoute.length, int(aRoute.time) / 60,
+    return Format("%s%.0f m, about %d min %02d s, %d junctions%s%s%s, %s", aRoute.turnAround ? "turn round, then " : "",
+                  aRoute.length, int(aRoute.time) / 60,
                   int(aRoute.time) % 60, junctions, turns.empty() ? "" : " (", turns.c_str(), turns.empty() ? "" : ")",
                   aRoute.highway > 0.0f ? Format("%s; %.0f%% highway", end.c_str(),
                                                  100.0f * aRoute.highway / std::max(aRoute.length, 1.0f))

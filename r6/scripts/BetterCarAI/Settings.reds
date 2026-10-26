@@ -468,13 +468,13 @@ public class BCAISettings extends ScriptableSystem {
     };
   }
 
-  // The route line on screen (see BCAIDebug.ProjectPolyline).
+  // The route line on screen, 6 floats a segment (see BCAIDebug.ProjectPolyline).
   public func GuideLine(points: array<Vector4>) -> array<Float> {
     if !IsDefined(this.bcaiDebug) {
       this.bcaiDebug = new BCAIDebug();
       this.bcaiDebug.Init();
     };
-    return this.bcaiDebug.ProjectPolyline(this.GetGameInstance(), points, 0.6);
+    return this.bcaiDebug.ProjectPolyline(this.GetGameInstance(), points, 0.4, true);
   }
 
   public func DebugFrame() -> array<Float> {
@@ -609,6 +609,89 @@ public class BCAISettings extends ScriptableSystem {
     return info;
   }
 
+  // For the driving test: a marker on the map and minimap where the test's
+  // route ends (the game's GPS still leads to the player's own pin, if any).
+  private let testPin: NewMappinID;
+
+  public func ShowTestPin(pos: Vector4) -> Void {
+    let mappins: ref<MappinSystem> = GameInstance.GetMappinSystem(this.GetGameInstance());
+    if !IsDefined(mappins) {
+      return;
+    };
+    this.HideTestPin();
+    let data: MappinData;
+    data.mappinType = t"Mappins.QuestStaticMappinDefinition";
+    data.variant = gamedataMappinVariant.CustomPositionVariant;
+    data.active = true;
+    data.visibleThroughWalls = true;
+    this.testPin = mappins.RegisterMappin(data, pos);
+    mappins.SetMappinActive(this.testPin, true);
+  }
+
+  public func HideTestPin() -> Void {
+    let none: NewMappinID;
+    let mappins: ref<MappinSystem> = GameInstance.GetMappinSystem(this.GetGameInstance());
+    if this.testPin.value != 0ul && IsDefined(mappins) {
+      mappins.UnregisterMappin(this.testPin);
+    };
+    this.testPin = none;
+  }
+
+  // For the driving test: the car put at pos facing forward (to drive the
+  // same route again from the same start). "" or why not.
+  public func TeleportVehicle(pos: Vector4, forward: Vector4) -> String {
+    let game: GameInstance = this.GetGameInstance();
+    let player: ref<PlayerPuppet> = GameInstance.GetPlayerSystem(game).GetLocalPlayerMainGameObject() as PlayerPuppet;
+    let vehicle: wref<VehicleObject>;
+    if !IsDefined(player) || !VehicleComponent.GetVehicle(game, player, vehicle) || !IsDefined(vehicle) {
+      return "not in a car";
+    };
+    GameInstance.GetTeleportationFacility(game).Teleport(vehicle, pos, Vector4.ToRotation(forward));
+    return "";
+  }
+
+  // The car's physics as its records give them, for the debug panel and
+  // the log (and to compare with what Autodrive+ learns): key=value pairs,
+  // "" when not in a car. Masses kg, torques Nm, radius m, angle degrees.
+  public func CarData() -> String {
+    let game: GameInstance = this.GetGameInstance();
+    let player: ref<PlayerPuppet> = GameInstance.GetPlayerSystem(game).GetLocalPlayerMainGameObject() as PlayerPuppet;
+    let vehicle: wref<VehicleObject>;
+    if !IsDefined(player) || !VehicleComponent.GetVehicle(game, player, vehicle) || !IsDefined(vehicle) {
+      return "";
+    };
+    let record: wref<Vehicle_Record> = vehicle.GetRecord();
+    let size: Vector4 = BCAIOwnDriver.RecordSize(vehicle);
+    let out: String = s"car=\(TDBID.ToStringDEBUG(vehicle.GetRecordID()));mass=\(vehicle.GetTotalMass());length=\(size.X);width=\(size.Y)";
+    if !IsDefined(record) {
+      return out;
+    };
+    let drive: wref<VehicleDriveModelData_Record> = record.VehDriveModelData();
+    if IsDefined(drive) {
+      out += s";recordMass=\(drive.Total_mass());wheelTurn=\(drive.MaxWheelTurnDeg());brakingFriction=\(drive.BrakingFrictionFactor());handbrake=\(drive.HandbrakeBrakingTorque())";
+      let wheels: wref<VehicleWheelDrivingSetup_Record> = drive.WheelSetup();
+      if IsDefined(wheels) {
+        let front: wref<VehicleWheelDrivingPreset_Record> = wheels.FrontPreset();
+        let back: wref<VehicleWheelDrivingPreset_Record> = wheels.BackPreset();
+        if IsDefined(front) {
+          out += s";frontFriction=\(front.TireFrictionCoef());frontLat=\(front.FrictionMulLateral());frontLong=\(front.FrictionMulLongitudinal());frontBrake=\(front.MaxBrakingTorque())";
+        };
+        if IsDefined(back) {
+          out += s";backFriction=\(back.TireFrictionCoef());backLat=\(back.FrictionMulLateral());backLong=\(back.FrictionMulLongitudinal());backBrake=\(back.MaxBrakingTorque())";
+        };
+      };
+    };
+    let engine: wref<VehicleEngineData_Record> = record.VehEngineData();
+    if IsDefined(engine) {
+      out += s";engineTorque=\(engine.EngineMaxTorque());gears=\(engine.GetGearsCount());maxRPM=\(engine.MaxRPM())";
+    };
+    let dims: wref<VehicleWheelDimensionsSetup_Record> = record.VehWheelDimensionsSetup();
+    if IsDefined(dims) && IsDefined(dims.FrontPreset()) {
+      out += s";tireRadius=\(dims.FrontPreset().TireRadius())";
+    };
+    return out;
+  }
+
   // Gets the car ready for Autodrive+ (stops AI drive and native autodrive).
   // Returns "" or why not.
   public func BeginOwnDriver(sensorGroup: String) -> String {
@@ -631,6 +714,9 @@ public class BCAISettings extends ScriptableSystem {
   }
 
   public func EndOwnDriver(why: String) -> Void {
+    if this.bcaiHudShown && !IsDefined(this.bcaiDriveCmd) {
+      this.ShowAutodriveHud(false, false);
+    };
     if IsDefined(this.bcaiOwnDriver) {
       this.bcaiOwnDriver.End();
       this.bcaiOwnDriver = null;
@@ -787,7 +873,7 @@ public class BCAISettings extends ScriptableSystem {
     player.RegisterInputListener(this, n"Accelerate");
     player.RegisterInputListener(this, n"Decelerate");
     player.RegisterInputListener(this, n"HoldAutodrive");
-    this.ShowAutodriveHud(true);
+    this.ShowAutodriveHud(true, indefinitely);
     return indefinitely ? "AI drive: ON (down the road)" : "AI drive: ON (to destination)";
   }
 
@@ -801,7 +887,7 @@ public class BCAISettings extends ScriptableSystem {
       this.bcaiInputPlayer = null;
     };
     if this.bcaiHudShown {
-      this.ShowAutodriveHud(false);
+      this.ShowAutodriveHud(false, false);
     };
     if IsDefined(this.bcaiDriveCmd) && IsDefined(this.bcaiDriveVehicle) {
       ai = this.bcaiDriveVehicle.GetAIComponent();
@@ -849,7 +935,8 @@ public class BCAISettings extends ScriptableSystem {
   // Native autodrive is off while AI drive runs, so its HUD (wheel icon,
   // minimap highlight, distance and time counters) would hide. The HUD only
   // reads this blackboard, so we fill it in ourselves.
-  private func ShowAutodriveHud(on: Bool) -> Void {
+  // (Autodrive+ shows it the same way, through ShowOwnDriverHud.)
+  private func ShowAutodriveHud(on: Bool, freeRoam: Bool) -> Void {
     let bb: ref<IBlackboard> = GameInstance.GetBlackboardSystem(this.GetGameInstance()).Get(GetAllBlackboardDefs().UI_AutodriveData);
     let def: ref<UI_AutodriveDataDef> = GetAllBlackboardDefs().UI_AutodriveData;
     this.bcaiHudShown = on;
@@ -857,7 +944,7 @@ public class BCAISettings extends ScriptableSystem {
       return;
     };
     if on {
-      bb.SetBool(def.FreeRoamEnabled, this.bcaiDriveIndefinitely);
+      bb.SetBool(def.FreeRoamEnabled, freeRoam);
       this.bcaiHudSpeed = 0.0;
       this.bcaiHudTime = this.Now();
       this.bcaiHudLength = -1.0;
@@ -916,6 +1003,49 @@ public class BCAISettings extends ScriptableSystem {
     this.bcaiHudLength = remaining;
     bb.SetFloat(def.DestinationRemainingLength, remaining);
     bb.SetFloat(def.DestinationRemainingTime, remaining / MaxF(this.bcaiHudSpeed, 5.0));
+  }
+
+  // The game's autodrive HUD while Autodrive+ drives (wheel icon, minimap
+  // highlight, distance and time counters), as for AI drive above.
+  public func ShowOwnDriverHud(on: Bool, freeRoam: Bool) -> Void {
+    if on || this.bcaiHudShown {
+      this.ShowAutodriveHud(on, freeRoam);
+    };
+    this.bcaiStartTime = this.Now();
+  }
+
+  // Every frame from CET while Autodrive+ drives, with the metres left (< 0:
+  // no destination). False once the game cleared its autodrive flag
+  // (combat, a drawn weapon, heavy damage, a quest lock): hand back control
+  // as vanilla does.
+  public func RefreshOwnDriverHud(remaining: Float) -> Bool {
+    let bb: ref<IBlackboard> = GameInstance.GetBlackboardSystem(this.GetGameInstance()).Get(GetAllBlackboardDefs().UI_AutodriveData);
+    let def: ref<UI_AutodriveDataDef> = GetAllBlackboardDefs().UI_AutodriveData;
+    let now: Float = this.Now();
+    let k: Float;
+    let speed: Float;
+    if !this.bcaiHudShown || !IsDefined(bb) || !IsDefined(this.bcaiOwnDriver) || !IsDefined(this.bcaiOwnDriver.vehicle) {
+      return true;
+    };
+    if !bb.GetBool(def.AutoDriveEnabled) {
+      if now - this.bcaiStartTime < 0.5 {
+        bb.SetBool(def.AutoDriveEnabled, true);
+      } else {
+        this.ShowAutodriveHud(false, false);
+        return false;
+      };
+    };
+    if remaining < 0.0 {
+      return true;
+    };
+    // (The speed averaged over about 5 s, so the time doesn't jump.)
+    speed = AbsF(this.bcaiOwnDriver.vehicle.GetCurrentSpeed());
+    k = ClampF((now - this.bcaiHudTime) / 5.0, 0.0, 1.0);
+    this.bcaiHudTime = now;
+    this.bcaiHudSpeed = this.bcaiHudSpeed <= 0.0 ? speed : this.bcaiHudSpeed + (speed - this.bcaiHudSpeed) * k;
+    bb.SetFloat(def.DestinationRemainingLength, remaining);
+    bb.SetFloat(def.DestinationRemainingTime, remaining / MaxF(this.bcaiHudSpeed, 5.0));
+    return true;
   }
 
   public static func ArrivalDistance() -> Float {

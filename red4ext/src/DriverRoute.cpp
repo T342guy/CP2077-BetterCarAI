@@ -10,21 +10,35 @@ namespace BCAI::Autodrive
 // (Re)plans from aPos, or from aFrom (a lane and distance along it).
 bool Driver::Plan(const LaneGraph& aGraph, const Point3& aPos, const Point3* aFwd, const Spot* aFrom, std::string& aMsg)
 {
-    Spot start{};
+    // The lane under the car going its way; the next best ones too, in case
+    // that one leads nowhere (a dead end).
+    std::vector<Spot> starts;
     if (aFrom)
-        start = *aFrom;
-    else if (!FindLane(aGraph, mGeo, aPos, aFwd, 15.0f, start))
+        starts.push_back(*aFrom);
+    else
+        starts = FindLanes(aGraph, mGeo, aPos, aFwd, 15.0f);
+    if (starts.empty())
     {
         aMsg = "no drivable lane under the car";
         return false;
     }
+    Spot start = starts.front();
     std::vector<Leg> legs;
     size_t expanded = 0;
     if (mHasGoal)
     {
         Route route;
-        bool planned = gPlanOverride ? gPlanOverride(aGraph, mGeo, start, mGoal, route)
-                                     : PlanRoute(aGraph, mGeo, start, mGoal, RouteOptions{}, route);
+        bool planned = false;
+        for (size_t k = 0; k < starts.size() && k < 4 && !planned; ++k)
+        {
+            Route tried;
+            planned = gPlanOverride ? gPlanOverride(aGraph, mGeo, starts[k], mGoal, tried)
+                                    : PlanRoute(aGraph, mGeo, starts[k], mGoal, RouteOptions{}, tried);
+            if (planned || k == 0)
+                route = std::move(tried);
+            if (planned)
+                start = starts[k];
+        }
         if (!planned)
         {
             aMsg = route.why;
@@ -387,9 +401,23 @@ void Driver::Profile()
 {
     mProfileLat = LatAccel();
     mProfileDecel = Decel();
+    mProfileTurn = mCar.Reach();
     size_t n = mPath.size();
     mSpeed.assign(n, 0.0f);
     float cap = mSettings.maxSpeed;
+    // The tightest the car turns at each speed (m/s): how far it turns at
+    // full lock (the steering fit, or tighter as seen: CarResponse::Reach),
+    // the wheel's limit there (Steer), a little held back for correcting. A
+    // tighter bend is taken slower than grip alone would ask (a long truck
+    // can't take a city corner at the speed its tyres would allow). (0.29
+    // went by the fit alone, which held the game's cars to a crawl at city
+    // corners.)
+    float turnMost[71];
+    for (int sp = 0; sp <= 70; ++sp)
+    {
+        float wheel = std::clamp(1.3f - 0.02f * float(sp), 0.45f, 1.0f);
+        turnMost[sp] = 0.9f * mCar.Reach() * std::pow(wheel, mCar.steer.p) / CarResponse::SpeedTurn(float(sp));
+    }
     for (size_t i = 0; i < n; ++i)
     {
         float v = std::min(cap, std::max(mLimit[i] * mSettings.laneSpeedFactor, 8.0f));
@@ -400,7 +428,13 @@ void Driver::Profile()
             // The two chords point along the path w/2 either side of i.
             float k = turn / float(kBendWindow);
             if (k > 1e-3f)
+            {
                 v = std::min(v, std::sqrt(LatAccel() / k));
+                int sp = int(std::min(v, 70.0f));
+                while (sp > 3 && turnMost[sp] < k)
+                    --sp;
+                v = std::min(v, float(std::max(sp, 3)));
+            }
         }
         mSpeed[i] = std::max(v, 3.0f);
     }

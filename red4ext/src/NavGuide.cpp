@@ -7,6 +7,8 @@
 
 #include <RED4ext/GameEngine.hpp>
 
+#include <random>
+
 namespace BCAI
 {
 using namespace Autodrive;
@@ -42,24 +44,35 @@ void Follow(const Point3& aPos)
 }
 } // namespace
 
-std::string NavPlan(void* aAutodrive, const Point3& aPos, const Point3* aFwd, const Point3& aGoal)
+std::string NavPlan(void* aAutodrive, const Point3& aPos, const Point3* aFwd, const Point3& aGoal, bool aTurnAround)
 {
     gGuide.valid = false;
     auto& graph = Lanes();
     if (!EnsureLanes(aAutodrive) || !graph.Loaded())
         return "the lane map isn't loaded";
-    // In a car: the lane it is on, going its way. On foot: any lane nearby.
-    Spot start{};
-    if (!(aFwd && FindLane(graph, gGuideGeo, aPos, aFwd, 15.0f, start)))
-    {
-        std::vector<Spot> nearby = FindLanes(graph, gGuideGeo, aPos, nullptr, 60.0f);
-        if (nearby.empty())
-            return "no road near you";
-        start = nearby.front();
-    }
+    // In a car: the lane it is on, going its way. On foot (or if that lane
+    // leads nowhere, a dead end): the lanes nearby, nearest first.
+    std::vector<Spot> starts;
+    if (aFwd)
+        starts = FindLanes(graph, gGuideGeo, aPos, aFwd, 15.0f);
+    for (const Spot& s : FindLanes(graph, gGuideGeo, aPos, nullptr, 60.0f))
+        starts.push_back(s);
+    if (starts.empty())
+        return "no road near you";
     Route route;
-    if (!PlanRoute(graph, gGuideGeo, start, aGoal, RouteOptions{}, route))
-        return route.why;
+    std::string why;
+    bool planned = false;
+    for (size_t k = 0; k < starts.size() && k < 6 && !planned; ++k)
+    {
+        planned = PlanRoute(graph, gGuideGeo, starts[k], aGoal, RouteOptions{}, route);
+        if (!planned && why.empty())
+            why = route.why;
+    }
+    // A player driving may turn round, when that is quicker.
+    if (aFwd && aTurnAround)
+        planned = PlanTurnRound(graph, gGuideGeo, aPos, *aFwd, aGoal, route, planned);
+    if (!planned)
+        return why;
     gGuide.route = std::move(route);
     gGuide.points = RoutePoints(graph, gGuideGeo, gGuide.route.legs, 1.0f);
     gGuide.goal = aGoal;
@@ -107,6 +120,46 @@ std::string NavStatus(const Point3& aPos)
             break;
         }
     return out;
+}
+
+bool NavRandom(void* aAutodrive, const Point3& aPos, const Point3& aFwd, float aMin, float aMax, uint32_t aSeed,
+               Point3& aOut)
+{
+    auto& graph = Lanes();
+    if (!EnsureLanes(aAutodrive) || !graph.Loaded())
+        return false;
+    Spot start{};
+    if (!FindLane(graph, gGuideGeo, aPos, &aFwd, 15.0f, start))
+        return false;
+    // Ordinary roads (not junctions, nor lanes AI isn't meant to drive).
+    std::vector<uint32_t> roads;
+    for (uint32_t i = 0; i < graph.Count(); ++i)
+    {
+        uint16_t f = graph.Flags(i);
+        if (Drivable(f) && !(f & (kLaneIntersection | kLaneNoAutodrive | kLaneNoAIDriving | kLaneTrafficDisabled)) &&
+            graph.Length(i) > 40.0f)
+            roads.push_back(i);
+    }
+    if (roads.empty())
+        return false;
+    std::mt19937 rng(aSeed);
+    for (int tries = 0; tries < 300; ++tries)
+    {
+        uint32_t lane = roads[rng() % roads.size()];
+        const LaneGeo& geo = gGuideGeo.Get(graph, lane);
+        Point3 p = geo.At(0.5f * geo.Length());
+        float d = Dist2(p, aPos);
+        if (d < aMin || d > aMax)
+            continue;
+        // (Reachable, and without a long way round.)
+        Route route;
+        if (PlanRoute(graph, gGuideGeo, start, p, RouteOptions{}, route) && route.length < 2.5f * d)
+        {
+            aOut = p;
+            return true;
+        }
+    }
+    return false;
 }
 
 void NavClear()

@@ -11,6 +11,8 @@ over these batches, on two seeds, against a baseline built from the previous
 - `hwy_score.sh label [N]`: N random highway scenes (`SEED`, default 3).
 - `sim.sh`, `one.sh`: a single drive; `BCAI_TELE=<from s> BCAI_TELE_LEN=<s>` prints the driver's state.
 - `battery.sh label [cars]`: all of the above for each car (default, hellhound, maimai) with the game's vehicle list (`LIST=0`: rays only); summary in `battery_<label>.txt`.
+- Pedal smoothness: each drive prints `pedals:` (how far the pedals moved per minute, seconds per minute on a hard brake, and quick flips: a pedal held under a second before the other); `pedals.sh results.txt` averages them, and `traffic_score.sh` and `hwy_score.sh` add that to their summary line.
+- `BCAI_CAR=truck`: a 12 m, 2.6 m wide truck (slow to speed up and stop, turns wide; its grip is a guess).
 - `crossings.sh`: refreshes `crossings_D*.txt`.
 - `scene.sh city|hwy SEED LABEL [ENV=..]`: one scene of a random set again on its own (e.g. `scene.sh city 7 T0071 BCAI_TELE=24`), printing the whole drive.
 - `same.sh BIN_A BIN_B [N]`: whether two builds drive exactly the same (for refactors and logging): N city and N/2 highway scenes for every car and style, compared by `BCAI_DIGEST` (a hash of every control output). Build both with `OUTBIN=build-linux/<name>/drive_sim EXTRA_FLAGS=-ffp-contract=off ../build_linux_sim.sh`, or the compiler fuses multiply-adds differently in each and every hash differs.
@@ -18,7 +20,10 @@ over these batches, on two seeds, against a baseline built from the previous
 Routes (the navigator, `src/Navigator.cpp`):
 
 - `drive_sim lanegraph.txt nav N [seed]`: N random trips planned by the 0.27 planner (`tests/nav_old.hpp`) and the navigator, compared: length, the planner's time, junctions, left turns, U-turns, how far from the pin each ends, and how often on the wrong level where roads are stacked. `BCAI_NAV_Z=none` gives the pins no height; `BCAI_NAV_SHOW=1` prints every trip; `BCAI_NAV_PATH=k` writes trip k's two routes to `dumps/nav_old.txt` and `dumps/nav_new.txt`.
-- `drive_sim lanegraph.txt navone x0 y0 hx hy x1 y1`: one trip, both planners, every leg and turn.
+- `drive_sim lanegraph.txt navone x0 y0 hx hy x1 y1`: one trip, both planners, every leg and turn (`BCAI_GOAL_Z=<m>`: the pin's own height, e.g. a quest pin's from the log).
+- `drive_sim lanegraph.txt navwalk N [seed]`: N pins on raised pavements (no road on their level within 25 m): how often the route ends a walk away along the pavements, how long the walks are, and how far from the pin it ends.
+- `drive_sim lanegraph.txt navturn N [seed]`: N random trips from the middle of an ordinary road lane, planned on from there and with the route guide's option of turning round first (0.30): how often turning round wins and what it saves.
+- `BCAI_GRIP=g`: a style's cornering grip instead of its default. `BCAI_CAR=slippery`: the default car with the old 9 m/s² grip, less than the styles ask for (grip learning). The cars' grip and body slip follow the 0.29 driving tests (about 2 g at 13° for the default car).
 - `BCAI_ROUTES=0.27`: Autodrive+ plans with the 0.27 planner. `score.sh` and `traffic_score.sh` set it (`BCAI_ROUTES=` to drop it): their cars are laid out along the old routes (D2's crossings and its multi-lane road), and the navigator takes D2 another way. Highway scenes use the navigator.
 - `navdrive.sh N SEED BASEBIN`: drives N random trips (`navtrips.py`) with `SIMBIN` and with a build using another planner, and compares how long they took to arrive (no traffic). A baseline with the 0.27 planner: copy `src` to `build-linux/oldnav/src`, make `DriverRoute.cpp` call `OldNav::Plan` (include `nav_old.hpp`), copy `scan_harness.cpp`, `nav_old.hpp` and `linux/` to `build-linux/oldnav/tests`, and build from there.
 

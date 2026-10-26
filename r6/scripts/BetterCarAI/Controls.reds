@@ -8,6 +8,9 @@ public class BCAIInputWatch extends IScriptable {
   public let brake: Float;
   public let steer: Float;
   public let handbrake: Float;
+  // The autodrive button held (with the game's autodrive HUD shown, the
+  // game's own request may not come through).
+  public let autodriveButton: Bool;
 
   public func Start(player: ref<PlayerPuppet>) -> Void {
     this.player = player;
@@ -15,6 +18,7 @@ public class BCAIInputWatch extends IScriptable {
     player.RegisterInputListener(this, n"Decelerate");
     player.RegisterInputListener(this, n"TurnX");
     player.RegisterInputListener(this, n"Handbrake");
+    player.RegisterInputListener(this, n"HoldAutodrive");
   }
 
   public func Stop() -> Void {
@@ -23,7 +27,9 @@ public class BCAIInputWatch extends IScriptable {
       this.player.UnregisterInputListener(this, n"Decelerate");
       this.player.UnregisterInputListener(this, n"TurnX");
       this.player.UnregisterInputListener(this, n"Handbrake");
+      this.player.UnregisterInputListener(this, n"HoldAutodrive");
     };
+    this.autodriveButton = false;
     this.player = null;
     this.throttle = 0.0;
     this.brake = 0.0;
@@ -35,6 +41,12 @@ public class BCAIInputWatch extends IScriptable {
     let value: Float = ListenerAction.GetValue(action);
     if Equals(ListenerAction.GetType(action), gameinputActionType.BUTTON_RELEASED) {
       value = 0.0;
+    };
+    if ListenerAction.IsAction(action, n"HoldAutodrive") {
+      if Equals(ListenerAction.GetType(action), gameinputActionType.BUTTON_HOLD_COMPLETE) {
+        this.autodriveButton = true;
+      };
+      return false;
     };
     if ListenerAction.IsAction(action, n"Accelerate") {
       this.throttle = value;

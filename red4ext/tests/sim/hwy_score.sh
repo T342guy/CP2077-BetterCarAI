@@ -10,4 +10,5 @@ off=$(grep -o 'off the road: [0-9]*' "$f" | awk '{s+=$4; if ($4>20) k++} END {pr
 mv=$(grep -o '[0-9]* moves of 2 m' "$f" | awk '{s+=$1; if ($1>m) m=$1} END {printf "%.1f (most %d)", s/NR, m}')
 avg=$(grep -o 'average [0-9]*' "$f" | awk '{s+=$2} END {printf "%.0f", s/NR}')
 mind=$(grep -o '[0-9]* changes of mind' "$f" | awk '{s+=$1} END {printf "%.2f", NR ? s/NR : 0}')
-echo "$1: $n scenes, $hit with contact, $((n-arr)) not arrived, off road $off, $mv big moves per drive, average $avg km/h, $mind changes of mind per drive"
+ped=$("$SIMDIR/pedals.sh" "$f")
+echo "$1: $n scenes, $hit with contact, $((n-arr)) not arrived, off road $off, $mv big moves per drive, average $avg km/h, $mind changes of mind per drive; $ped"

@@ -61,7 +61,13 @@ Situation Driver::Survey(float v, float dt)
     for (float ahead = 0.0f; ahead <= 60.0f; ahead += 10.0f)
         mWant = std::min(mWant, SpeedAt(mProgress + ahead));
     Gather(c.horizon);
-    c.laneNeed = std::max(150.0f, 6.0f * v);
+    // How far ahead to be in the route's lane: about 9 s of driving (150 m
+    // at least), and more for each further lane to cross (in traffic a
+    // move can wait a while for a gap).
+    {
+        float lanesOver = std::floor(std::fabs(mLateral) / 3.5f);
+        c.laneNeed = std::max(150.0f, 9.0f * v) * (1.0f + 0.4f * std::max(lanesOver - 1.0f, 0.0f));
+    }
     c.laneHome = HomeLane(c.laneNeed, &c.homeWhy);
     // The lane the car is in runs out within that (it has to move over).
     {
@@ -74,8 +80,8 @@ Situation Driver::Survey(float v, float dt)
     const float now = c.now, len = c.len;
     c.home = Shift{now, c.laneHome, mProgress,
                    std::min(std::max({len, MinShiftLength(c.laneHome - now),
-                                      std::sqrt(5.8f * std::fabs(c.laneHome - now) * v * v / (0.35f * LatAccel()))}),
-                            std::max(len, 150.0f))};
+                                      std::sqrt(5.8f * std::fabs(c.laneHome - now) * v * v / (0.35f * MoveLat()))}),
+                            std::max({len, 150.0f, 5.0f * v}))};
     c.homeWay = Clearance(c.home, c.horizon);
     for (const Body& b : mBodies)
         if (c.homeWay.block >= 0.0f &&
@@ -236,7 +242,7 @@ bool Driver::SlowPassClear(const Situation& c) const
     const float v = c.v;
     float want = std::max(mWant, v), u = std::max(homeBody->u, 0.0f);
     bool slow = rules.slowShare > 0.0f ? u < rules.slowShare * want : u < want - rules.slowBy;
-    float need = c.passNeed + std::sqrt(5.8f * 3.5f * want * want / (0.5f * LatAccel())) + 20.0f;
+    float need = c.passNeed + std::sqrt(5.8f * 3.5f * want * want / (0.5f * MoveLat())) + 20.0f;
     float time = need / std::max(0.5f * (v + want), 3.0f) + 2.0f;
     float slack = mPassMoving ? 0.7f : 1.0f;
     bool clear = slow && need < 400.0f;
@@ -266,7 +272,7 @@ bool Driver::OncomingClear(const Situation& c) const
     const float v = c.v;
     float want = std::max(mWant, v), a = std::max(AccelAt(v), 1.0f);
     float need = std::min(c.roadUntil < 1e8f ? c.roadUntil : c.passNeed, 300.0f) +
-                 std::sqrt(5.8f * 3.5f * want * want / (0.5f * LatAccel())) + 10.0f;
+                 std::sqrt(5.8f * 3.5f * want * want / (0.5f * MoveLat())) + 10.0f;
     float time = (std::sqrt(v * v + 2.0f * a * need) - v) / a + 1.0f;
     float gap, speed;
     Oncoming(need + 25.0f * time, gap, speed);
@@ -363,12 +369,12 @@ std::vector<std::pair<Shift, Way>> Driver::Options(const Situation& c) const
             // whole lane over at speed takes a while).
             if (part == 1.0f)
                 shift.len = std::min(
-                    std::max(shift.len, std::sqrt(5.8f * std::fabs(shift.to - now) * v * v / (0.35f * LatAccel()))),
-                    150.0f);
+                    std::max(shift.len, std::sqrt(5.8f * std::fabs(shift.to - now) * v * v / (0.35f * MoveLat()))),
+                    std::max(150.0f, 5.0f * v));
             // (A gentle move was made just long enough for this: a little
             // slack, or rounding drops it some frames and not others.)
             float lateralAccel = 5.8f * std::fabs(shift.to - now) * v * v / (shift.len * shift.len);
-            if (lateralAccel > 1.001f * (c.emergency ? 1.1f : hurry ? 0.8f : 0.35f) * LatAccel())
+            if (lateralAccel > 1.001f * (c.emergency ? 1.1f : hurry ? 0.8f : 0.35f) * MoveLat())
                 continue;
             options.push_back({shift, Clearance(shift, c.horizon, c.roadUntil, c.passNeed)});
         }
@@ -831,7 +837,7 @@ Way Driver::Clearance(const Shift& aShift, float aHorizon, float aRoadUntil, flo
     // go. Ending off the road counts however far off the car is already.)
     float moveEnd = aShift.start + aShift.len - mProgress;
     float vNow = std::max(mLast.speed, 3.0f);
-    float back = std::sqrt(5.8f * std::fabs(aShift.to) * vNow * vNow / (0.5f * LatAccel()));
+    float back = std::sqrt(5.8f * std::fabs(aShift.to) * vNow * vNow / (0.5f * MoveLat()));
     float roadTo = moveEnd + 30.0f + back;
     // (Past a car: until well past it, and then moving back.)
     float passTo = aRoadAtLeast > 0.0f ? aRoadAtLeast + back : 0.0f;

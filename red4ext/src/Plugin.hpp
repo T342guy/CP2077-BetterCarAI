@@ -250,7 +250,8 @@ std::string DumpRoute(void* aAutodrive, const RED4ext::Vector4& aPos, std::files
 // by the navigator (Navigator.hpp) whether Autodrive+ drives or not.
 // Plans from aPos (in a car: heading aFwd; on foot: aFwd null) to aGoal.
 // Returns "route: <summary>" or why not.
-std::string NavPlan(void* aAutodrive, const Point3& aPos, const Point3* aFwd, const Point3& aGoal);
+std::string NavPlan(void* aAutodrive, const Point3& aPos, const Point3* aFwd, const Point3& aGoal,
+                    bool aTurnAround = false);
 // The route from where the player is (aPos, projected onto it) for aAhead
 // metres, a point every aStep metres.
 std::vector<Point3> NavAhead(const Point3& aPos, float aAhead, float aStep);
@@ -260,6 +261,11 @@ std::vector<Point3> NavAhead(const Point3& aPos, float aAhead, float aStep);
 // (degrees, left positive). Empty without a route.
 std::string NavStatus(const Point3& aPos);
 void NavClear();
+// A destination for a driving test: an ordinary road aMin..aMax metres away
+// (straight line), reachable from the lane the car is on without a long way
+// round. False if none was found.
+bool NavRandom(void* aAutodrive, const Point3& aPos, const Point3& aFwd, float aMin, float aMax, uint32_t aSeed,
+               Point3& aOut);
 // Research: scans the game's GPS system (gamegpsGPSSystem) for lane routes
 // like ScanForPath, to find where it keeps the route it draws on the map.
 std::string ScanGPS(void* aAutodrive, const RED4ext::Vector4& aOrigin, const RED4ext::Vector4& aHeading,
@@ -348,6 +354,7 @@ struct DriverVehicle
     Point3 p, fwd, vel;
     bool parked = false; // the game says so, or nobody drives it
     bool bike = false;
+    float length = 0.0f, width = 0.0f; // as its record gives them (0: not known)
 };
 // Returns how many vehicles it now follows.
 size_t DriverVehicles(const std::vector<DriverVehicle>& aList);

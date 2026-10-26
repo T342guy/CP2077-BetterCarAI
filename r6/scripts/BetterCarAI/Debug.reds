@@ -284,7 +284,8 @@ public class BCAIDebug extends IScriptable {
     if now - this.trailTime >= 0.1 || now < this.trailTime {
       this.trailTime = now;
       ArrayPush(this.trail, this.pos);
-      ArrayPush(this.trailSlip, AbsF(this.lateral));
+      // (The slip angle, degrees: sideways speed against speed.)
+      ArrayPush(this.trailSlip, this.speed > 3.0 ? Rad2Deg(AsinF(MinF(AbsF(this.lateral) / this.speed, 1.0))) : 0.0);
       ArrayPush(this.trailAir, this.airborne);
       while ArraySize(this.trail) > 150 {
         ArrayErase(this.trail, 0);
@@ -572,14 +573,16 @@ public class BCAIDebug extends IScriptable {
     };
   }
 
+  // Slip angle in degrees. The game's cars corner hardest at 8-15 degrees
+  // (driving tests: about 2 g); past about 17 they slide.
   private func SlipColour(slip: Float, air: Bool) -> Float {
     if air {
       return BCAIDebug.Magenta();
     };
-    if slip > 4.0 {
+    if slip > 17.0 {
       return BCAIDebug.Red();
     };
-    if slip > 1.5 {
+    if slip > 8.0 {
       return BCAIDebug.Yellow();
     };
     return BCAIDebug.Green();
@@ -605,7 +608,7 @@ public class BCAIDebug extends IScriptable {
       i += 1;
     };
 
-    // Trail: green = gripping, yellow/red = sliding sideways, magenta = airborne.
+    // Trail: green = gripping, yellow = cornering hard, red = sliding, magenta = airborne.
     i = this.hideTrail ? ArraySize(this.trail) : 1;
     while i < ArraySize(this.trail) {
       this.Line(game, this.trail[i - 1], this.trail[i], this.SlipColour(this.trailSlip[i], this.trailAir[i]), 3.0);
@@ -718,7 +721,9 @@ public class BCAIDebug extends IScriptable {
   // A line through the world (lifted by lift metres) as screen segments, 4
   // floats each (x1, y1, x2, y2 as fractions of the screen), the part behind
   // the camera cut off. For the route line, which shows without the overlay.
-  public func ProjectPolyline(game: GameInstance, points: array<Vector4>, lift: Float) -> array<Float> {
+  // withDepth: 6 floats per segment, the 4 above, then how far its start is
+  // from the camera (m) and which segment of the polyline it is.
+  public func ProjectPolyline(game: GameInstance, points: array<Vector4>, lift: Float, opt withDepth: Bool) -> array<Float> {
     let out: array<Float>;
     let near: Float = 0.5;
     let i: Int32 = 1;
@@ -745,6 +750,10 @@ public class BCAIDebug extends IScriptable {
         ArrayPush(out, sa.Y);
         ArrayPush(out, sb.X);
         ArrayPush(out, sb.Y);
+        if withDepth {
+          ArrayPush(out, MaxF(da, near));
+          ArrayPush(out, Cast<Float>(i - 1));
+        };
       };
       i += 1;
     };

@@ -461,8 +461,9 @@ void NativeDriverBody(IScriptable*, CStackFrame* aFrame, bool* aOut, int64_t)
 }
 
 // BCAI_DriverVehicles(list: array<Vector4>) -> Int32: the vehicles near the
-// car, three entries each: position (W: 1 parked, +2 a bike), forward,
-// velocity. Returns how many vehicles the driver follows.
+// car, three entries each: position (W: 1 parked, +2 a bike), forward (W:
+// its length, 0 not known), velocity (W: its width). Returns how many
+// vehicles the driver follows.
 void NativeDriverVehicles(IScriptable*, CStackFrame* aFrame, int32_t* aOut, int64_t)
 {
     RED4ext::DynArray<RED4ext::Vector4> list;
@@ -472,7 +473,8 @@ void NativeDriverVehicles(IScriptable*, CStackFrame* aFrame, int32_t* aOut, int6
     for (uint32_t i = 0; i + 2 < list.size(); i += 3)
     {
         int flags = int(list[i].W + 0.5f);
-        vehicles.push_back({ToPoint(list[i]), ToPoint(list[i + 1]), ToPoint(list[i + 2]), (flags & 1) != 0, (flags & 2) != 0});
+        vehicles.push_back({ToPoint(list[i]), ToPoint(list[i + 1]), ToPoint(list[i + 2]), (flags & 1) != 0,
+                            (flags & 2) != 0, list[i + 1].W, list[i + 2].W});
     }
     size_t count = DriverVehicles(vehicles);
     if (aOut)
@@ -584,10 +586,34 @@ void NativeNavPlan(IScriptable*, CStackFrame* aFrame, RED4ext::CString* aOut, in
     RED4ext::GetParameter(aFrame, &inCar);
     aFrame->code++;
     Point3 f = ToPoint(forward);
-    std::string result = autodrive ? NavPlan(autodrive.instance, ToPoint(pos), inCar ? &f : nullptr, ToPoint(goal))
+    // (forward.W 1: the player drives and may turn round.)
+    std::string result = autodrive ? NavPlan(autodrive.instance, ToPoint(pos), inCar ? &f : nullptr, ToPoint(goal),
+                                             forward.W > 0.5f)
                                    : "no autodrive system";
     if (aOut)
         *aOut = result.c_str();
+}
+
+// BCAI_NavRandom(autodrive: ref<IScriptable>, pos: Vector4, forward: Vector4, minDist: Float, maxDist: Float,
+// seed: Int32) -> Vector4: a destination for a driving test (W 1), or W 0.
+void NativeNavRandom(IScriptable*, CStackFrame* aFrame, RED4ext::Vector4* aOut, int64_t)
+{
+    RED4ext::Handle<IScriptable> autodrive;
+    RED4ext::Vector4 pos{}, forward{};
+    float minDist = 800.0f, maxDist = 2000.0f;
+    int32_t seed = 0;
+    RED4ext::GetParameter(aFrame, &autodrive);
+    RED4ext::GetParameter(aFrame, &pos);
+    RED4ext::GetParameter(aFrame, &forward);
+    RED4ext::GetParameter(aFrame, &minDist);
+    RED4ext::GetParameter(aFrame, &maxDist);
+    RED4ext::GetParameter(aFrame, &seed);
+    aFrame->code++;
+    Point3 dest{};
+    bool found = autodrive && NavRandom(autodrive.instance, ToPoint(pos), ToPoint(forward), minDist, maxDist,
+                                        uint32_t(seed), dest);
+    if (aOut)
+        *aOut = {dest.x, dest.y, dest.z, found ? 1.0f : 0.0f};
 }
 
 // BCAI_NavAhead(pos: Vector4, ahead: Float, step: Float) -> array<Vector4>
@@ -601,7 +627,8 @@ void NativeNavAhead(IScriptable*, CStackFrame* aFrame, RED4ext::DynArray<RED4ext
     aFrame->code++;
     if (!aOut)
         return;
-    for (const Point3& p : NavAhead(ToPoint(pos), std::clamp(ahead, 0.0f, 2000.0f), std::max(step, 1.0f)))
+    // (Up to 20 km: the driving test saves the whole route.)
+    for (const Point3& p : NavAhead(ToPoint(pos), std::clamp(ahead, 0.0f, 20000.0f), std::max(step, 1.0f)))
         aOut->PushBack({p.x, p.y, p.z, 1.0f});
 }
 
@@ -865,6 +892,16 @@ void RegisterNatives()
     navPlan->AddParam("Bool", "inCar");
     navPlan->SetReturnType("String");
     rtti->RegisterFunction(navPlan);
+
+    auto* navRandom = Make("BCAI_NavRandom", &NativeNavRandom);
+    navRandom->AddParam("handle:IScriptable", "autodrive");
+    navRandom->AddParam("Vector4", "pos");
+    navRandom->AddParam("Vector4", "forward");
+    navRandom->AddParam("Float", "minDist");
+    navRandom->AddParam("Float", "maxDist");
+    navRandom->AddParam("Int32", "seed");
+    navRandom->SetReturnType("Vector4");
+    rtti->RegisterFunction(navRandom);
 
     auto* navAhead = Make("BCAI_NavAhead", &NativeNavAhead);
     navAhead->AddParam("Vector4", "pos");

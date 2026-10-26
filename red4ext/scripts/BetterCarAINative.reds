@@ -135,6 +135,10 @@ public static native func BCAI_NavAhead(pos: Vector4, ahead: Float, step: Float)
 // slight left, slight right, U-turn), in (m), angle (degrees, left +).
 public static native func BCAI_NavStatus(pos: Vector4) -> String
 public static native func BCAI_NavClear() -> Bool
+
+// Plugin 0.29+: a destination for a driving test, an ordinary road minDist..maxDist
+// metres away that the car can reach (W 1; W 0 when none was found).
+public static native func BCAI_NavRandom(autodrive: ref<IScriptable>, pos: Vector4, forward: Vector4, minDist: Float, maxDist: Float, seed: Int32) -> Vector4
 // Research: scans the game's GPS system for the route it draws on the map
 // (lane routes, like BCAI_ScanForPath) to dumps/pathscan_gps_*.txt.
 public static native func BCAI_ScanGPS(autodrive: ref<IScriptable>, origin: Vector4, heading: Vector4) -> String

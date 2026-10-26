@@ -11,6 +11,7 @@ python3 -I "$SIMDIR/randtraffic.py" ${2:-400} ${SEED:-7} | "$SIMDIR/pool.sh" > "
 n=$(wc -l < "$f"); hit=$(grep -c ': [1-9][0-9]* contacts' "$f"); arr=$(grep -c 'state 1: arrived' "$f")
 avg=$(grep -o 'average [0-9]*' "$f" | awk '{s+=$2} END {printf "%.0f", s/NR}')
 mind=$(grep -o '[0-9]* changes of mind' "$f" | awk '{s+=$1} END {printf "%.2f", NR ? s/NR : 0}')
+ped=$("$SIMDIR/pedals.sh" "$f")
 off=$(grep -o 'off the road: [0-9]*' "$f" | awk '{s+=$4} END {printf "%d", s}')
-echo "$1: $n scenes, $hit with contact, $((n-arr)) not arrived, average $avg km/h, $off m off the road, $mind changes of mind per drive"
+echo "$1: $n scenes, $hit with contact, $((n-arr)) not arrived, average $avg km/h, $off m off the road, $mind changes of mind per drive; $ped"
 "$SIMDIR/classify.sh" "$f"

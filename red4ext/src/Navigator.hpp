@@ -180,6 +180,8 @@ struct Route
     // (sideways and in height) and whether the destination's height was used.
     Spot end{};
     float endGap = 0.0f, endDz = 0.0f;
+    float endWalk = -1.0f; // a pin off the roads' levels: the walk to it along the pavements (< 0: none)
+    bool turnAround = false; // it starts by turning round (the route guide, a player driving)
     bool heightKnown = true;
     int candidates = 0;    // lanes around the destination it could end on
     size_t searched = 0;   // lanes the search looked at
@@ -194,6 +196,19 @@ std::vector<Spot> FindLanes(const LaneGraph& aGraph, GeoCache& aGeo, const Point
                             float aRadius);
 bool FindLane(const LaneGraph& aGraph, GeoCache& aGeo, const Point3& aPos, const Point3* aHeading, float aRadius,
               Spot& aOut);
+
+// Turning round on the spot, as the planner counts it (s): a quick turn in
+// the road, with time to wait for a gap.
+constexpr float kTurnRoundTime = 15.0f;
+
+// For a player driving at aPos facing aFwd: the route from a lane the other
+// way beside the car (not a highway's, across its barrier) replaces aRoute
+// (planned on from the car's lane, if aPlanned) when it saves more than
+// turning round takes, rather than driving on to the next place to turn
+// (round the block, or to a roundabout across town). It then starts with a
+// U-turn and turnAround set. Returns whether there is a route.
+bool PlanTurnRound(const LaneGraph& aGraph, GeoCache& aGeo, const Point3& aPos, const Point3& aFwd,
+                   const Point3& aGoal, Route& aRoute, bool aPlanned);
 // The quickest (or shortest) way from aStart to the destination aGoal.
 bool PlanRoute(const LaneGraph& aGraph, GeoCache& aGeo, const Spot& aStart, const Point3& aGoal,
                const RouteOptions& aOptions, Route& aOut);

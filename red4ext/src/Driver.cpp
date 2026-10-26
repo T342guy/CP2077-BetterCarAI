@@ -153,7 +153,8 @@ void Driver::UseSettings(const DriverSettings& aSet)
 {
     if (mSettings.maxSpeed != aSet.maxSpeed || mSettings.latAccel != aSet.latAccel ||
         mSettings.laneSpeedFactor != aSet.laneSpeedFactor || mSettings.decel != aSet.decel ||
-        std::fabs(LatAccel() - mProfileLat) > 0.25f || std::fabs(Decel() - mProfileDecel) > 0.25f)
+        std::fabs(LatAccel() - mProfileLat) > 0.25f || std::fabs(Decel() - mProfileDecel) > 0.25f ||
+        std::fabs(mCar.Reach() - mProfileTurn) > 0.015f)
     {
         mSettings = aSet;
         Profile();
@@ -315,9 +316,13 @@ float Driver::TargetSpeed(const Motion& m, float aMaxSteer, float aWantRate, flo
                     b = moving || !known ? std::min(6.0f, 0.75f * BrakeMax()) : std::min(4.0f, 0.5f * BrakeMax());
         float gap = mBlock - minGap;
         float safe = gap > 0.0f ? std::sqrt(mLeadSpeed * mLeadSpeed + 2.0f * b * gap) : 0.0f;
+        // Keeping the time gap: its speed, plus a little for each metre
+        // short of or past the gap wanted (one rule nearer and further, so
+        // the target doesn't jump where one would hand over to another;
+        // closing a longer gap a bit quicker).
         float wanted = minGap + v * mSettings.followTime;
-        if (moving && mBlock < wanted)
-            safe = std::min(safe, std::max(0.0f, mLeadSpeed + 0.4f * (mBlock - wanted)));
+        if (moving)
+            safe = std::min(safe, std::max(0.0f, mLeadSpeed + (mBlock > wanted ? 0.7f : 0.4f) * (mBlock - wanted)));
         // (Coming the other way, while the car moves back out of its
         // lane: not stopping there, where it can't move sideways.)
         if (mBlockMeasured && mBlockU < -1.0f && mReturning)
@@ -339,26 +344,41 @@ float Driver::TargetSpeed(const Motion& m, float aMaxSteer, float aWantRate, flo
     if (mDropBack >= 0.0f)
         cap(mDropBack, "dropping back");
 
+    // Sliding: the slip well past what this car's cornering needs (learned
+    // while it grips), for a moment. (A few degrees of slip, and the tyres'
+    // squeal, are the game's cars cornering hard, not sliding.)
+    {
+        float slip = std::fabs(m.slip), side = std::fabs(v * mYawRate);
+        if (v > 8.0f && slip > 0.03f && slip < 0.15f && side > 2.0f && side < 0.6f * LatAccel() && mSlideTime <= 0.0f)
+            mCar.slipStiff += (std::clamp(side / slip, 40.0f, 200.0f) - mCar.slipStiff) * std::min(1.0f, dt / 3.0f);
+        bool sliding = v > 8.0f && slip > 0.06f && (slip * mCar.slipStiff > 1.5f * side + 2.0f || slip > kSlideSlip);
+        mSlideTime = sliding ? mSlideTime + dt : 0.0f;
+    }
     // Out of grip (sliding, or the wheel at its limit and the car still
     // turning too little): bring the speed down gradually until it grips.
-    bool noGrip = v > 8.0f && (std::fabs(m.slip) > 0.1f ||
+    bool noGrip = v > 8.0f && (mSlideTime > 0.15f ||
                                (std::fabs(mSteer) >= aMaxSteer - 0.02f && aWantRate * mYawRate >= 0.0f &&
                                 std::fabs(mYawRate) < 0.7f * std::fabs(aWantRate)));
     if (noGrip)
         mGripSpeed = std::min(mGripSpeed, v) - 3.0f * dt;
     else
         mGripSpeed = std::min(mGripSpeed + 3.0f * dt, 100.0f);
-    // This car's grip: where it slid, or ran wide with the wheel at its
-    // limit, in a real corner (not the wheel's own limit at low sideways
-    // acceleration); creeping back up while it corners near that cleanly.
+    // This car's grip: down to where it slid, or ran wide with the wheel at
+    // its limit, in a real corner (not the wheel's own limit at low sideways
+    // acceleration); up while it corners near it cleanly (quicker up to
+    // where it last slid, slowly past that). Gentle bends say nothing of
+    // the limit: a low-grip car rose on them and met a hard bend too fast.
     {
-        float side = std::fabs(v * mYawRate), g = mCar.grip > 0.0f ? mCar.grip : mSettings.latAccel;
+        float side = std::fabs(v * mYawRate), g = mCar.grip > 0.0f ? mCar.grip : kStartGrip;
         bool slid = v > 8.0f && side > 4.0f &&
-                    (std::fabs(m.slip) > 0.1f || (noGrip && std::fabs(mSteer) >= aMaxSteer - 0.02f));
+                    (mSlideTime > 0.15f || (noGrip && std::fabs(mSteer) >= aMaxSteer - 0.02f));
         if (slid && side < g)
+        {
             mCar.grip = g + (std::max(side, 0.45f * 9.81f) - g) * std::min(1.0f, dt / 0.3f);
-        else if (mCar.grip > 0.0f && !noGrip && side > 0.85f * g)
-            mCar.grip = std::min(g + 0.1f * dt, mSettings.latAccel);
+            mCar.slidAt = mCar.grip;
+        }
+        else if (!noGrip && mSlideTime <= 0.0f && v > 8.0f && side > 0.8f * g && g < mSettings.latAccel)
+            mCar.grip = std::min(g + (mCar.slidAt > 0.0f && g >= mCar.slidAt ? 0.1f : 0.5f) * dt, mSettings.latAccel);
     }
     cap(mGripSpeed, "losing grip");
     NoteSpeed(targetSpeed, noGrip, m.slip);
@@ -367,17 +387,21 @@ float Driver::TargetSpeed(const Motion& m, float aMaxSteer, float aWantRate, flo
 
 // The pedals for the target speed. The acceleration wanted: close the speed
 // gap in a bit over a second, plus the slowing down the plan asks for right
-// here; it changes smoothly (harder only when braking hard).
+// here; it changes smoothly (quicker only when braking hard), and the
+// pedals move like a driver's foot, not at once.
 void Driver::Pedals(const Motion& m, float aTargetSpeed, float aFollowNeed, DriverOutput& aOut)
 {
     const float v = m.v, dt = m.dt, targetSpeed = aTargetSpeed;
     float err = targetSpeed - v;
     float span = std::max(5.0f, 0.5f * v);
     float planAccel = (SpeedAt(mProgress + span) - SpeedAt(mProgress)) / span * std::max(v, 0.0f);
+    float want = 0.8f * err + std::min(planAccel, 0.0f);
     // (Likewise for what it follows, once that takes more than gentle
-    // slowing: else it would run on a few m/s too fast all the way.)
-    float followAccel = targetSpeed < v + 2.0f ? -std::max(aFollowNeed - 1.0f, 0.0f) : 0.0f;
-    float want = std::clamp(0.8f * err + std::min({planAccel, followAccel, 0.0f}), -9.0f, 4.0f);
+    // slowing: else it would run on a few m/s too fast all the way. The
+    // harder of the two, not both added up.)
+    if (targetSpeed < v + 2.0f && aFollowNeed > 1.0f)
+        want = std::min(want, 1.0f - aFollowNeed);
+    want = std::clamp(want, -9.0f, 4.0f);
     // No speeding up only to brake again shortly: if a slower stretch
     // ahead couldn't be reached by gently slowing down from here, coast.
     float coastTo = 1e9f;
@@ -388,8 +412,10 @@ void Driver::Pedals(const Motion& m, float aTargetSpeed, float aFollowNeed, Driv
     }
     if (v >= coastTo)
         want = std::min(want, CarResponse::Lookup(mCar.coast, v) + m.gravity);
-    float down = (want < -3.0f ? 25.0f : 8.0f) * dt;
-    mAccelWant += std::clamp(want - mAccelWant, -down, 8.0f * dt);
+    // (Quick onto the brake only when it has to stop hard.)
+    bool urgent = want < -0.6f * BrakeMax() || aFollowNeed > 0.6f * BrakeMax();
+    float down = (urgent ? 25.0f : want < -3.0f ? 12.0f : 5.0f) * dt;
+    mAccelWant += std::clamp(want - mAccelWant, -down, 5.0f * dt);
     if (targetSpeed < 0.5f && v < 1.5f)
     {
         // Stopped or nearly: hold it with the handbrake (the brake
@@ -405,11 +431,20 @@ void Driver::Pedals(const Motion& m, float aTargetSpeed, float aFollowNeed, Driv
         // the wanted acceleration as delayed as the car's answer).
         mAccelLagged += (mAccelWant - mAccelLagged) * std::min(1.0f, dt / 0.4f);
         float force = mAccelWant + mAccelTrim - m.gravity - CarResponse::Lookup(mCar.coast, v);
+        // (Coasting covers a little slowing: the brake only past that, and
+        // off again only once it is hardly needed.)
+        mBraking = force < (mBraking ? -0.25f : -0.6f);
         if (force > 0.0f)
             aOut.throttle = std::clamp(force / CarResponse::Lookup(mCar.full, v), 0.0f, 1.0f);
-        else if (force < -0.25f)
+        else if (mBraking)
             aOut.brake = mCar.brake.X(-force);
-        bool saturated = aOut.throttle >= 1.0f || aOut.brake >= 1.0f;
+        // The throttle eases on (full in about 0.7 s) and off a bit
+        // quicker; straight off when braking.
+        float asked = aOut.throttle;
+        if (aOut.brake <= 0.0f)
+            aOut.throttle = std::clamp(aOut.throttle, mLast.throttle - 4.0f * dt, mLast.throttle + 1.5f * dt);
+        // (Nor does the trim learn while the throttle is still easing on.)
+        bool saturated = aOut.throttle >= 1.0f || aOut.brake >= 1.0f || std::fabs(aOut.throttle - asked) > 0.02f;
         if (v > 2.0f && !saturated)
             mAccelTrim = std::clamp(mAccelTrim + 0.4f * (mAccelLagged - mAccel) * dt, -1.5f, 1.5f);
         if (v < 1.0f && aOut.brake > 0.0f)
@@ -422,9 +457,9 @@ void Driver::Pedals(const Motion& m, float aTargetSpeed, float aFollowNeed, Driv
     if (v > 5.0f)
     {
         float slip = std::fabs(m.slip);
-        if (slip > 0.25f)
+        if (slip > kSlideSlip || mSlideTime > 0.3f)
             aOut.throttle = 0.0f;
-        else if (slip > 0.12f)
+        else if (mSlideTime > 0.0f)
             aOut.throttle *= 0.3f;
     }
 }
@@ -483,6 +518,21 @@ bool Driver::Unstick(const Motion& m, float aMaxRate, DriverOutput& aOut)
 // speeding up at full throttle and coasting.
 void Driver::LearnResponse(float v, float aSlip, float aGravity, float dt)
 {
+    // The tightest it really turns, from turns with the wheel well over (as
+    // full lock by the fit's power), while it grips (cornering hard the
+    // game's cars slip a few degrees); rising over a second.
+    {
+        float steerLeft = -mSteerFelt * mSteerSign, curv = v > 3.0f ? mYawRate / v : 0.0f;
+        if (mSignKnown && v > 3.0f && std::fabs(steerLeft) > 0.5f && std::fabs(mSteer - mSteerFelt) < 0.1f &&
+            mSlideTime <= 0.0f && mLast.handbrake <= 0.0f && steerLeft * curv > 0.0f)
+        {
+            float full = std::min(std::fabs(curv) * CarResponse::SpeedTurn(v) /
+                                      std::pow(std::fabs(steerLeft), mCar.steer.p),
+                                  0.5f);
+            if (full > mCar.turnSeen)
+                mCar.turnSeen += (full - mCar.turnSeen) * std::min(1.0f, dt / 1.0f);
+        }
+    }
     if (v < 3.0f || std::fabs(aSlip) > 0.06f || mLast.handbrake > 0.0f)
         return;
     float keep = std::exp(-dt / 45.0f);
