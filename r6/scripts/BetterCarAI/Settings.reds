@@ -228,6 +228,8 @@ public class BCAISettings extends ScriptableSystem {
   private let bcaiOwnDriver: ref<BCAIOwnDriver>;
   public let bcaiOwnDriverStop: String;
   private let bcaiAutodrivePlusTakeover: Bool;
+  // Autodrive+ lists people on foot to the plugin (0.31+).
+  private let bcaiAutodrivePlusPeople: Bool;
   private let bcaiAutodrivePlusRequested: Bool;
 
   private let bcaiDriveTarget: Vector4;
@@ -542,6 +544,15 @@ public class BCAISettings extends ScriptableSystem {
     this.bcaiAutodrivePlusTakeover = on;
   }
 
+  // Whether Autodrive+ watches for people on foot (the game's people are
+  // listed to the plugin with the vehicles).
+  public func SetAutodrivePlusPeople(on: Bool) -> Void {
+    this.bcaiAutodrivePlusPeople = on;
+    if IsDefined(this.bcaiOwnDriver) {
+      this.bcaiOwnDriver.people = on;
+    };
+  }
+
   // From the autodrive start request: true if Autodrive+ should start
   // instead (CET picks it up with TakeAutodrivePlusRequest).
   public func RequestAutodrivePlus() -> Bool {
@@ -709,6 +720,7 @@ public class BCAISettings extends ScriptableSystem {
     };
     this.bcaiOwnDriver = new BCAIOwnDriver();
     this.bcaiOwnDriver.Begin(game, player, vehicle, StringToName(sensorGroup));
+    this.bcaiOwnDriver.people = this.bcaiAutodrivePlusPeople;
     this.bcaiOwnDriverStop = "";
     return "";
   }

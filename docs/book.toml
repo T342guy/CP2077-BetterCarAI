@@ -1,0 +1,13 @@
+[book]
+title = "Better Car AI"
+description = "Better Car AI for Cyberpunk 2077: Autodrive+, better routes, calmer traffic, and the research behind them."
+authors = ["T342"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/T342guy/CP2077-BetterCarAI"
+site-url = "/CP2077-BetterCarAI/"

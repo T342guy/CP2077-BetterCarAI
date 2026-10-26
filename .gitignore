@@ -4,3 +4,4 @@ bin/x64/plugins/cyber_engine_tweaks/mods/BetterCarAI/rec_*.csv
 bin/x64/plugins/cyber_engine_tweaks/mods/BetterCarAI/trouble_spots.json
 red4ext/build/
 red4ext/build-linux/
+docs/book/

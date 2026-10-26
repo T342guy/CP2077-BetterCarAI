@@ -49,7 +49,8 @@ end
 -- What each style does, in a sentence or two.
 UI.STYLE_TEXT = {
   "Drives by the rules: about the speed limit, keeps right, overtakes only what stands still, gives "
-    .. "junctions room and leaves a 2 s gap. It still doesn't see traffic lights.",
+    .. "junctions room, slows for crosswalks with someone by them and leaves a 2 s gap. It still doesn't see "
+    .. "traffic lights.",
   "Fast and hard: well over the limit, brakes late, keeps right except to overtake, and overtakes slow "
     .. "cars on the other side of the road when it can see nothing is coming.",
   "Gets there as fast as it can without crashing: any lane, any gap, overtakes whenever nothing is coming, "
@@ -145,6 +146,11 @@ function UI.DrawMain(app)
     checkbox(app, "The game's autodrive button starts Autodrive+", "ownTakeOverAutodrive")
     checkbox(app, "Show the game's autodrive HUD while it drives", "ownGameHud")
     hint("The wheel icon on the minimap and the side panel with distance and time left")
+    if (app.nativeVersion() or 0) >= 3100 then
+      checkbox(app, "Watch for people on foot", "ownPeople")
+      hint("Stops for people crossing or stepping into the road, goes round someone standing in it, and in City "
+        .. "slows for crosswalks with someone by them (all styles; people walking along the pavement don't count)")
+    end
     if ImGui.CollapsingHeader(Overlay.STYLE_NAMES[settings.ownStyle + 1] .. " settings") then
       styleSettings(app)
     end

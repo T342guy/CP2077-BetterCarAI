@@ -28,6 +28,10 @@ public class BCAIOwnDriver extends IScriptable {
   public let fromTargeting: Int32;
   private let targeted: array<wref<VehicleObject>>;
   private let targetedAt: Float;
+  // People on foot are listed too (Autodrive+ watches for them): those the
+  // targeting search found (within 100 m), not in a vehicle.
+  public let people: Bool;
+  private let peopleTargeted: array<wref<NPCPuppet>>;
 
   public func Begin(game: GameInstance, player: ref<PlayerPuppet>, vehicle: ref<VehicleObject>, sensorGroup: CName) -> Void {
     this.vehicle = vehicle;
@@ -52,6 +56,7 @@ public class BCAIOwnDriver extends IScriptable {
     };
     this.halfWidth = this.MeasureAcross(game, vehicle, 0.95);
     ArrayClear(this.targeted);
+    ArrayClear(this.peopleTargeted);
     this.targetedAt = -1.0;
     // Steering, throttle or brake from the player hands control back.
     this.input = new BCAIInputWatch();
@@ -183,9 +188,11 @@ public class BCAIOwnDriver extends IScriptable {
   }
 
   // Vehicles near the car, as the game knows them, three entries each:
-  // position (W 1 parked, +2 a bike), forward, velocity. From two searches:
-  // the traffic system's (cars driving in traffic, every call) and the
-  // targeting system's (anything targetable, a few times a second).
+  // position (W 1 parked, +2 a bike, +4 a person on foot), forward,
+  // velocity. From two searches: the traffic system's (cars driving in
+  // traffic, every call) and the targeting system's (anything targetable, a
+  // few times a second; people on foot too while `people` is on, listed with
+  // no velocity: the plugin works it out from where they were).
   public func Vehicles(game: GameInstance) -> array<Vector4> {
     let out: array<Vector4>;
     let found: array<wref<VehicleObject>>;
@@ -215,15 +222,17 @@ public class BCAIOwnDriver extends IScriptable {
       };
       i += 1;
     };
-    // The targeting system: everything targetable within 100 m but people.
+    // The targeting system: everything targetable within 100 m (but people,
+    // unless it watches for them).
     let now: Float = EngineTime.ToFloat(GameInstance.GetSimTime(game));
     if IsDefined(this.player) && (this.targetedAt < 0.0 || now - this.targetedAt > 0.25) {
       let query: TargetSearchQuery;
       let parts: array<TS_TargetPartInfo>;
       this.targetedAt = now;
       ArrayClear(this.targeted);
+      ArrayClear(this.peopleTargeted);
       query.testedSet = TargetingSet.Complete;
-      query.searchFilter = TSF_And(TSF_Not(TSFMV.Obj_Player), TSF_Not(TSFMV.Obj_Puppet));
+      query.searchFilter = this.people ? TSF_Not(TSFMV.Obj_Player) : TSF_And(TSF_Not(TSFMV.Obj_Player), TSF_Not(TSFMV.Obj_Puppet));
       query.maxDistance = 100.0;
       query.filterObjectByDistance = true;
       query.includeSecondaryTargets = false;
@@ -236,6 +245,10 @@ public class BCAIOwnDriver extends IScriptable {
           let v: wref<VehicleObject> = component.GetEntity() as VehicleObject;
           if this.IsOther(this.targeted, v) {
             ArrayPush(this.targeted, v);
+          };
+          let npc: wref<NPCPuppet> = component.GetEntity() as NPCPuppet;
+          if this.people && this.IsPerson(game, npc, pos) {
+            ArrayPush(this.peopleTargeted, npc);
           };
         };
         i += 1;
@@ -266,7 +279,41 @@ public class BCAIOwnDriver extends IScriptable {
       ArrayPush(out, vel);
       i += 1;
     };
+    i = 0;
+    while i < ArraySize(this.peopleTargeted) {
+      let npc: wref<NPCPuppet> = this.peopleTargeted[i];
+      if IsDefined(npc) {
+        let p: Vector4 = npc.GetWorldPosition();
+        let fwd: Vector4 = npc.GetWorldForward();
+        p.W = 4.0;
+        fwd.W = 0.0;
+        ArrayPush(out, p);
+        ArrayPush(out, fwd);
+        ArrayPush(out, new Vector4(0.0, 0.0, 0.0, 0.0));
+      };
+      i += 1;
+    };
     return out;
+  }
+
+  // Someone on foot to watch for: alive and awake, not in a vehicle, not
+  // listed yet. (Within 100 m, as the search: a truck at 60 km/h needs about
+  // 40 m to stop for someone.)
+  private func IsPerson(game: GameInstance, npc: wref<NPCPuppet>, pos: Vector4) -> Bool {
+    if !IsDefined(npc) || !ScriptedPuppet.IsActive(npc) || VehicleComponent.IsMountedToVehicle(game, npc) {
+      return false;
+    };
+    if Vector4.Distance(npc.GetWorldPosition(), pos) > 100.0 {
+      return false;
+    };
+    let i: Int32 = 0;
+    while i < ArraySize(this.peopleTargeted) {
+      if this.peopleTargeted[i] == npc {
+        return false;
+      };
+      i += 1;
+    };
+    return true;
   }
 
   // A vehicle, not this car, and not in the list yet.

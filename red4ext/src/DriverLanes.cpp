@@ -38,6 +38,8 @@ void Driver::Avoid(float v, float dt)
     CountMoves(c);
     Commit(c, chosen);
     WatchJunction(c);
+    WatchWideTurn(c);
+    WatchCrosswalks(c);
     FindDoor(c, bestWay);
 }
 
@@ -216,6 +218,9 @@ bool Driver::Standing(const Situation& c) const
         return false;
     if (homeBody->kind == 1 || homeBody->parked)
         return true;
+    // (Someone standing in the road, not crossing it: after as long.)
+    if (homeBody->kind == 2)
+        return homeBody->stillFor > rules.standingAfter && std::fabs(homeBody->w) < 0.3f;
     if (homeBody->kind != 0 || !homeBody->measured || std::fabs(homeBody->u) >= 0.5f ||
         homeBody->stillFor <= rules.standingAfter)
         return false;
@@ -563,6 +568,7 @@ void Driver::Commit(const Situation& c, const Way& aChosen)
     mBlockMeasured = chosen.blockMeasured;
     mBlockKnown = chosen.blockKnown;
     mRoundGap = c.standing && c.homeWay.block >= 0.0f ? c.homeWay.block : -1.0f;
+    mRoundPerson = c.homeBody && c.homeBody->kind == 2;
 }
 
 // A junction ahead with a car on the roads across it that may go (moving,
@@ -613,6 +619,128 @@ void Driver::WatchJunction(const Situation& c)
     }
 }
 
+// A long vehicle about to turn so tightly that its ends swing over the
+// oncoming lanes (Swing): it waits before the turn while something coming
+// the other way would get there while it is in it (mWideGap).
+void Driver::WatchWideTurn(const Situation& c)
+{
+    float was = mWideGap;
+    mWideGap = WideTurnWait(c);
+    if (mWideGap >= 0.0f && was < 0.0f)
+        Note("waiting to swing wide: a turn %.0f m ahead swings its ends into the oncoming lanes, traffic coming",
+             mWideGap);
+    else if (mWideGap < 0.0f && was >= 0.0f)
+        Note("swinging wide: the way is clear");
+}
+
+// How far before the turn to wait (< 0: no need).
+float Driver::WideTurnWait(const Situation& c) const
+{
+    if (!Long())
+        return -1.0f;
+    // Where the centre is when an end is over (c0..c1), and where along
+    // the line and how far sideways the ends sweep.
+    float c0 = -1.0f, c1 = -1.0f, z0 = 1e9f, z1 = -1e9f, zl0 = 1e9f, zl1 = -1e9f;
+    for (float ahead = 0.0f; ahead <= 80.0f && mProgress + ahead + mFront <= mS.back(); ahead += 1.0f)
+    {
+        float s = mProgress + ahead;
+        bool over = false;
+        for (float a : {mFront, -mRear})
+        {
+            float at = s + a, e = mShift.At(at) + SwingAt(s, at);
+            const PathPoint& pt = mPath[Index(at)];
+            // Near or past the edge of its own side, where there are
+            // oncoming lanes (whether it reaches a car there is judged by
+            // where that car really is).
+            bool left = e > std::max(pt.hiSame, 0.0f) - 0.3f && pt.hi > pt.hiSame + 0.5f;
+            bool right = e < std::min(pt.loSame, 0.0f) + 0.3f && pt.lo < pt.loSame - 0.5f;
+            if (!left && !right)
+                continue;
+            over = true;
+            z0 = std::min(z0, at - 2.0f);
+            z1 = std::max(z1, at + 2.0f);
+            zl0 = std::min(zl0, left ? pt.hiSame : e - mHalfWidth);
+            zl1 = std::max(zl1, left ? e + mHalfWidth : pt.loSame);
+        }
+        if (over && c0 < 0.0f)
+            c0 = s;
+        if (over)
+            c1 = s;
+        else if (c0 >= 0.0f && s > c1 + 10.0f)
+            break;
+    }
+    // (Already in it: carry on through.)
+    if (c0 < 0.0f || c0 < mProgress + 1.0f)
+        return -1.0f;
+    // When it would be in it: the speed through it as planned (from a
+    // standstill when it waits right before it), and a margin.
+    float v = std::max(c.v, 0.0f), through = 1e9f;
+    for (float s = c0; s <= c1; s += 2.0f)
+        through = std::min(through, SpeedAt(s));
+    through = std::max(through, 2.0f);
+    float t0 = (c0 - mProgress) / std::max({v, through, 3.0f});
+    float t1 = t0 + (c1 - c0 + mFront + mRear) / through + (v < 1.0f ? through / 1.5f : 0.0f);
+    float margin = c.rules->cautious ? 2.5f : 1.2f;
+    // Each vehicle coming the other way (listed, or seen by the rays): when
+    // it is in the stretch the ends sweep.
+    auto clash = [&](float s0, float s1, float l0, float l1, float u)
+    {
+        if (u > -1.0f || l1 < zl0 - 0.5f || l0 > zl1 + 0.5f)
+            return false;
+        float tIn = std::max(0.0f, (s0 - z1) / -u), tOut = (s1 - z0) / -u;
+        return tOut > 0.0f && tIn < t1 + margin && tOut > t0 - margin;
+    };
+    bool wait = false;
+    for (const Known& kn : mKnown)
+    {
+        float s, l;
+        Point3 at = KnownAt(kn);
+        if (kn.person || !Project(at, mProgress - 20.0f, mProgress + 200.0f, s, l) || std::fabs(at.z - At(s).z) > 3.5f)
+            continue;
+        Point3 n = Normal(s);
+        float u = kn.vel.x * n.y - kn.vel.y * n.x, reach = std::max(kn.front, kn.rear);
+        wait = wait || clash(s - reach, s + reach, l - kn.half, l + kn.half, u);
+    }
+    for (const Body& b : mBodies)
+        if (b.kind == 0 && b.known < 0 && b.measured)
+            wait = wait || clash(b.s0, b.s1, b.l0, b.l1, b.u);
+    return wait ? c0 - mProgress : -1.0f;
+}
+
+// A crosswalk ahead with someone on foot by it (City): they may step out,
+// so it slows to a speed it can stop from (mCrosswalkGap). Only slowing,
+// never waiting: people stand at crosswalks for the lights, or just stand.
+void Driver::WatchCrosswalks(const Situation& c)
+{
+    mCrosswalkGap = -1.0f;
+    if (c.rules->crosswalkCare)
+        for (float ahead = 0.0f; ahead <= 40.0f && mProgress + mFront + ahead <= mS.back() && mCrosswalkGap < 0.0f;
+             ahead += 1.0f)
+        {
+            float at = mProgress + mFront + ahead;
+            const PathPoint& pt = mPath[Index(at)];
+            if (!pt.crosswalk)
+                continue;
+            Point3 n = Normal(at), here = At(at);
+            float hiEdge = std::max(pt.hi, 0.0f) + mHalfWidth + 4.0f, loEdge = std::min(pt.lo, 0.0f) - mHalfWidth - 4.0f;
+            for (const Known& kn : mKnown)
+            {
+                Point3 p = KnownAt(kn);
+                float dx = p.x - here.x, dy = p.y - here.y;
+                float along = dx * n.y - dy * n.x, side = dx * n.x + dy * n.y;
+                if (kn.person && std::fabs(along) < 4.0f && side < hiEdge && side > loEdge && std::fabs(p.z - here.z) < 3.0f)
+                    mCrosswalkGap = ahead;
+            }
+            ahead += 6.0f; // (past this crosswalk)
+        }
+    float at = mProgress + mFront + mCrosswalkGap;
+    if (mCrosswalkGap >= 0.0f && std::fabs(at - mNoted.crosswalkAt) > 10.0f)
+    {
+        Note("crosswalk %.0f m ahead with someone by it: slowing", mCrosswalkGap);
+        mNoted.crosswalkAt = at;
+    }
+}
+
 // No way past what is ahead (mNoWay), but a gap beside it wide enough for
 // the car (on the road; across the oncoming lanes only when it may pass):
 // backing up gives the room to steer into it (mDoor).
@@ -658,7 +786,7 @@ void Driver::Oncoming(float aRange, float& aGap, float& aSpeed) const
     {
         float s, l;
         Point3 at = KnownAt(kn);
-        if (!Project(at, mProgress, mProgress + aRange + 10.0f, s, l) || std::fabs(at.z - At(s).z) > 3.5f)
+        if (kn.person || !Project(at, mProgress, mProgress + aRange + 10.0f, s, l) || std::fabs(at.z - At(s).z) > 3.5f)
             continue;
         const PathPoint& pt = mPath[Index(s)];
         Point3 n = Normal(s);
@@ -873,10 +1001,11 @@ Way Driver::Clearance(const Shift& aShift, float aHorizon, float aRoadUntil, flo
             ((b.u <= v + 0.5f && b.s1 < mProgress - rear - 3.0f - 1.5f * std::max(b.u, 0.0f)) ||
              (b.l1 > mLateral - mHalfWidth - 0.6f && b.l0 < mLateral + mHalfWidth + 0.6f)))
             continue;
-        float r = mHalfWidth + (b.kind == 0 ? 0.6f : 0.4f);
+        float r = mHalfWidth + (b.kind == 0 ? 0.6f : b.kind == 2 ? 0.5f : 0.4f);
         // Alongside: its near side is where the rays saw it, and the car
-        // may stay as close as it already is (but come no closer).
-        bool alongside = gap < 0.0f && b.kind == 0;
+        // may stay as close as it already is (but come no closer; past
+        // someone on foot, not within half a metre).
+        bool alongside = gap < 0.0f && b.kind != 1;
         bool leftOfUs = 0.5f * (b.seenL0 + b.seenL1) > mLateral;
         float nearNow = leftOfUs ? b.seenL0 - mLateral : mLateral - b.seenL1;
         auto hits = [&](float d, float lo, float hi)
@@ -887,7 +1016,7 @@ Way Driver::Clearance(const Shift& aShift, float aHorizon, float aRoadUntil, flo
                 return true;
             float nearThen = leftOfUs ? b.seenL0 - d : d - b.seenL1;
             way.squeeze = std::max(way.squeeze, nearNow - nearThen);
-            return nearThen < nearNow - 0.1f || nearThen < mHalfWidth + 0.15f;
+            return nearThen < nearNow - 0.1f || nearThen < mHalfWidth + (b.kind == 2 ? 0.5f : 0.15f);
         };
         bool inPath = false;
         if (gap > -1.0f)
@@ -918,10 +1047,18 @@ Way Driver::Clearance(const Shift& aShift, float aHorizon, float aRoadUntil, flo
                       to = std::min(me + mFront, b.s1 + b.u * t + 0.8f * std::max(b.u, 0.0f));
                 if (from > to)
                     continue;
-                float side = (std::fabs(b.w) > 0.6f ? b.w : 0.0f) * std::min(t, 2.5f);
-                float lo = b.l0 + side, hi = b.l1 + side;
-                if (hits(dAt(from), lo, hi) || hits(dAt(0.5f * (from + to)), lo, hi) ||
-                    hits(dAt(to), lo, hi))
+                // (Someone on foot keeps walking across, for longer than a
+                // car crossing is followed, but may change their mind: the
+                // further ahead in time, the more room round them.)
+                float side = (std::fabs(b.w) > (b.kind == 2 ? 0.3f : 0.6f) ? b.w : 0.0f) *
+                             std::min(t, b.kind == 2 ? 6.0f : 2.5f);
+                float grow = b.kind == 2 ? std::min(0.3f * t, 1.0f) : 0.0f;
+                float lo = b.l0 + side - grow, hi = b.l1 + side + grow;
+                // (A long vehicle's ends swing out in a bend, past the
+                // margin r keeps: SwingAt.)
+                float mid = 0.5f * (from + to);
+                if (hits(dAt(from) + SwingAt(me, from, 0.3f), lo, hi) ||
+                    hits(dAt(mid) + SwingAt(me, mid, 0.3f), lo, hi) || hits(dAt(to) + SwingAt(me, to, 0.3f), lo, hi))
                 {
                     met = std::min(met, me - mProgress);
                     break;
@@ -938,7 +1075,7 @@ Way Driver::Clearance(const Shift& aShift, float aHorizon, float aRoadUntil, flo
             if (behind < 3.0f + 0.5f * b.u + closing * closing / 6.0f)
                 met = 0.0f;
         }
-        bool crossing = std::fabs(b.w) > 1.5f;
+        bool crossing = std::fabs(b.w) > (b.kind == 2 ? 0.4f : 1.5f);
         if (met < 1e8f && !crossing && met < reach)
         {
             reach = met;

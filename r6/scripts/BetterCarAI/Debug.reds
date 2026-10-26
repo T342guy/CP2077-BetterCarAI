@@ -663,7 +663,7 @@ public class BCAIDebug extends IScriptable {
     };
 
     // Autodrive+: the road's edges, and what its sensor sees (orange cars,
-    // red walls; the one in the way bigger, magenta).
+    // red walls; the one in the way bigger, magenta; people on foot green).
     i = this.hideSensor ? ArraySize(this.ownRoom) : 2;
     while i + 1 < ArraySize(this.ownRoom) {
       this.Line(game, this.ownRoom[i - 2] + new Vector4(0.0, 0.0, 0.3, 0.0), this.ownRoom[i] + new Vector4(0.0, 0.0, 0.3, 0.0), BCAIDebug.Grey(), 1.0);
@@ -674,7 +674,11 @@ public class BCAIDebug extends IScriptable {
     while i < ArraySize(this.ownSeen) {
       let kind: Int32 = Cast<Int32>(this.ownSeen[i].W + 0.5);
       let point: Vector4 = new Vector4(this.ownSeen[i].X, this.ownSeen[i].Y, this.ownSeen[i].Z, 1.0);
-      if kind > 2 {
+      if kind >= 5 {
+        // Someone on foot (green; the one in the way bigger).
+        this.Marker(game, point + new Vector4(0.0, 0.0, 1.0, 0.0), kind == 6 ? 6.0 : 3.5, BCAIDebug.Green(), kind == 6 && !labelled ? this.blockLabel : "");
+        labelled = labelled || kind == 6;
+      } else if kind > 2 {
         this.Marker(game, point, 6.0, BCAIDebug.Magenta(), labelled ? "" : this.blockLabel);
         labelled = true;
       } else {

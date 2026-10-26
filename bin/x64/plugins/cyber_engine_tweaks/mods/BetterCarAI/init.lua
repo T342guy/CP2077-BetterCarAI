@@ -125,6 +125,10 @@ local defaults = {
   madFollowTime = 0.8,
   -- Starting autodrive starts Autodrive+ (instead of AI drive).
   ownTakeOverAutodrive = false,
+  -- Autodrive+ watches for people on foot (needs the native plugin 0.31):
+  -- stops for people crossing, goes round someone standing in the road, and
+  -- in City slows for crosswalks with someone by them.
+  ownPeople = true,
   -- While Autodrive+ drives, show the game's autodrive HUD (the wheel icon on
   -- the minimap, the side panel with distance and time left).
   ownGameHud = true,
@@ -301,6 +305,7 @@ local function pushToScripts()
   sys:SetAggroTraffic(settings.aggroClearTraffic, settings.aggroRunLights)
   sys:SetStabilityGovernor(settings.aiGovernor)
   sys:SetAutodrivePlusTakeover(settings.ownTakeOverAutodrive and (nativeVersion() or 0) >= 1900)
+  sys:SetAutodrivePlusPeople(settings.ownPeople and (nativeVersion() or 0) >= 3100)
   sys:SetAIDriveMinSpeed((state.aiDriveBike and settings.aiBikeMinSpeedKmh or settings.aiMinSpeedKmh) / 3.6)
 end
 

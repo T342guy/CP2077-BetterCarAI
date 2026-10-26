@@ -90,9 +90,11 @@ public static native func BCAI_DriverSense(ends: array<Vector4>) -> Int32
 // centre), Z half its width.
 public static native func BCAI_DriverBody(body: Vector4) -> Bool
 // Vehicles the game lists nearby, three entries each: position (W 1 parked,
-// +2 a bike), forward, velocity. Returns how many the driver follows.
+// +2 a bike, +4 a person on foot), forward, velocity. Returns how many the
+// driver follows.
 public static native func BCAI_DriverVehicles(list: array<Vector4>) -> Int32
-// What the sensor remembers (W 1 vehicle, 2 wall, +2 the one in the way).
+// What the sensor remembers (W 1 vehicle, 2 wall, +2 the one in the way; 5
+// a person on foot, 6 the one in the way).
 public static native func BCAI_DriverSeen() -> array<Vector4>
 // X gap to what is in the way (< 0 nothing), Y what (0 vehicle, 1 wall),
 // Z where it is heading sideways from its line, W how far off that it is.

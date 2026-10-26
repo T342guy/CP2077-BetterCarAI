@@ -461,9 +461,9 @@ void NativeDriverBody(IScriptable*, CStackFrame* aFrame, bool* aOut, int64_t)
 }
 
 // BCAI_DriverVehicles(list: array<Vector4>) -> Int32: the vehicles near the
-// car, three entries each: position (W: 1 parked, +2 a bike), forward (W:
-// its length, 0 not known), velocity (W: its width). Returns how many
-// vehicles the driver follows.
+// car, three entries each: position (W: 1 parked, +2 a bike, +4 a person on
+// foot), forward (W: its length, 0 not known), velocity (W: its width).
+// Returns how many vehicles (and people) the driver follows.
 void NativeDriverVehicles(IScriptable*, CStackFrame* aFrame, int32_t* aOut, int64_t)
 {
     RED4ext::DynArray<RED4ext::Vector4> list;
@@ -474,7 +474,7 @@ void NativeDriverVehicles(IScriptable*, CStackFrame* aFrame, int32_t* aOut, int6
     {
         int flags = int(list[i].W + 0.5f);
         vehicles.push_back({ToPoint(list[i]), ToPoint(list[i + 1]), ToPoint(list[i + 2]), (flags & 1) != 0,
-                            (flags & 2) != 0, list[i + 1].W, list[i + 2].W});
+                            (flags & 2) != 0, list[i + 1].W, list[i + 2].W, (flags & 4) != 0});
     }
     size_t count = DriverVehicles(vehicles);
     if (aOut)
@@ -482,14 +482,16 @@ void NativeDriverVehicles(IScriptable*, CStackFrame* aFrame, int32_t* aOut, int6
 }
 
 // BCAI_DriverSeen() -> array<Vector4>: what the sensor remembers; W 1 a
-// vehicle, 2 a wall, plus 2 for the one in the way.
+// vehicle, 2 a wall, plus 2 for the one in the way; 5 a person on foot, 6
+// the one in the way.
 void NativeDriverSeen(IScriptable*, CStackFrame* aFrame, RED4ext::DynArray<RED4ext::Vector4>* aOut, int64_t)
 {
     aFrame->code++;
     if (!aOut)
         return;
     for (const auto& seen : DriverSeen())
-        aOut->PushBack({seen.p.x, seen.p.y, seen.p.z, float(seen.kind + 1 + (seen.blocking ? 2 : 0))});
+        aOut->PushBack({seen.p.x, seen.p.y, seen.p.z,
+                        seen.kind == 2 ? (seen.blocking ? 6.0f : 5.0f) : float(seen.kind + 1 + (seen.blocking ? 2 : 0))});
 }
 
 // BCAI_DriverInfo() -> Vector4: X gap to what is in the way (< 0 nothing),

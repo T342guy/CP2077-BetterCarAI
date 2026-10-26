@@ -348,13 +348,15 @@ size_t DriverSense(const std::vector<Point3>& aEnds, const std::vector<bool>& aH
 void DriverBody(float aFront, float aRear, float aHalfWidth);
 // Vehicles near the car as the game lists them (not just what the rays saw):
 // where each is, which way it points and how it moves. Their size is learned
-// from the rays that hit them.
+// from the rays that hit them. People on foot come in the same list (the
+// rays don't see them).
 struct DriverVehicle
 {
     Point3 p, fwd, vel;
     bool parked = false; // the game says so, or nobody drives it
     bool bike = false;
     float length = 0.0f, width = 0.0f; // as its record gives them (0: not known)
+    bool person = false; // someone on foot (their velocity is worked out from where they were listed)
 };
 // Returns how many vehicles it now follows.
 size_t DriverVehicles(const std::vector<DriverVehicle>& aList);

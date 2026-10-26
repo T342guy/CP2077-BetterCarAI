@@ -310,10 +310,14 @@ float Driver::TargetSpeed(const Motion& m, float aMaxSteer, float aWantRate, flo
         // to steer round it, slowing down more gently.
         // (Something not measured yet: firmer, later, as it is most
         // likely moving.)
-        bool moving = mLeadSpeed >= 1.0f;
+        // (Someone on foot: a few metres short, braking in good time, as
+        // the car can't swerve round them.)
+        bool moving = mLeadSpeed >= 1.0f, person = mBlockKind == 2;
         bool known = mBlockKind != 0 || mBlockMeasured;
-        const float minGap = moving ? rules.followGap : 7.0f,
-                    b = moving || !known ? std::min(6.0f, 0.75f * BrakeMax()) : std::min(4.0f, 0.5f * BrakeMax());
+        const float minGap = person ? 4.0f : moving ? rules.followGap : 7.0f,
+                    b = person               ? std::min(4.5f, 0.6f * BrakeMax())
+                        : moving || !known ? std::min(6.0f, 0.75f * BrakeMax())
+                                           : std::min(4.0f, 0.5f * BrakeMax());
         float gap = mBlock - minGap;
         float safe = gap > 0.0f ? std::sqrt(mLeadSpeed * mLeadSpeed + 2.0f * b * gap) : 0.0f;
         // Keeping the time gap: its speed, plus a little for each metre
@@ -327,7 +331,7 @@ float Driver::TargetSpeed(const Motion& m, float aMaxSteer, float aWantRate, flo
         // lane: not stopping there, where it can't move sideways.)
         if (mBlockMeasured && mBlockU < -1.0f && mReturning)
             safe = std::max(safe, std::min(std::max(v, 0.0f), 5.0f));
-        cap(safe, mBlockKind == 1 ? "something in the way" : moving ? "following" : "stopping behind");
+        cap(safe, mBlockKind == 1 ? "something in the way" : person ? "person ahead" : moving ? "following" : "stopping behind");
         if (v > mLeadSpeed)
             aFollowNeed = (v * v - mLeadSpeed * mLeadSpeed) / (2.0f * std::max(gap, 1.0f));
     }
@@ -339,10 +343,17 @@ float Driver::TargetSpeed(const Motion& m, float aMaxSteer, float aWantRate, flo
             "junction: car across");
     // Going round something standing: past it at no more than about
     // 30 km/h (in case the way round closes; a madman about 40).
+    // (Round someone standing in the road: about 15 km/h.)
     if (mRoundGap >= 0.0f)
-        cap(std::sqrt(rules.roundBase + 8.0f * std::max(mRoundGap - 5.0f, 0.0f)), "going round");
+        cap(std::sqrt((mRoundPerson ? 16.0f : rules.roundBase) + 8.0f * std::max(mRoundGap - 5.0f, 0.0f)), "going round");
+    // A crosswalk with someone by it (City): able to stop for them.
+    if (mCrosswalkGap >= 0.0f)
+        cap(std::sqrt(2.0f * 2.5f * std::max(mCrosswalkGap - 2.0f, 0.0f)) + 4.0f, "crosswalk");
     if (mDropBack >= 0.0f)
         cap(mDropBack, "dropping back");
+    // A long vehicle waiting for a gap before a turn its ends swing wide in.
+    if (mWideGap >= 0.0f)
+        cap(std::sqrt(2.0f * std::min(2.5f, Decel()) * std::max(mWideGap - 1.0f, 0.0f)), "wide turn: oncoming");
 
     // Sliding: the slip well past what this car's cornering needs (learned
     // while it grips), for a moment. (A few degrees of slip, and the tyres'
@@ -471,13 +482,17 @@ bool Driver::Unstick(const Motion& m, float aMaxRate, DriverOutput& aOut)
 {
     const float v = m.v, dt = m.dt;
     mStuck = (aOut.throttle > 0.4f && std::fabs(v) < 0.3f) ? mStuck + dt : 0.0f;
-    bool boxed = std::fabs(v) < 0.5f && mBlock >= 0.0f && mBlock < 12.0f && mLeadSpeed < 0.5f && mNoWay && mDoor;
+    // (Not for someone crossing: only once they have stood in the road long
+    // enough to go round.)
+    bool boxed = std::fabs(v) < 0.5f && mBlock >= 0.0f && mBlock < 12.0f && mLeadSpeed < 0.5f && mNoWay && mDoor &&
+                 (mBlockKind != 2 || mRoundGap >= 0.0f);
     mBoxed = boxed ? mBoxed + dt : 0.0f;
     if (mReverse <= 0.0f && (mStuck > 2.5f || mBoxed > 2.5f) && mRearClear > 2.0f)
     {
         Note("backing up (%s), %.1f m clear behind, %s %.1f m ahead, time %d",
              mStuck > 2.5f ? "pressing on without moving" : "boxed in behind something with no way past",
-             std::min(mRearClear, 99.0f), mBlockKind == 1 ? "wall" : "car", mBlock, mReversals + 1);
+             std::min(mRearClear, 99.0f), mBlockKind == 1 ? "wall" : mBlockKind == 2 ? "person" : "car", mBlock,
+             mReversals + 1);
         mReverse = 8.0f;
         mReverseGap = mBlock;
         mStuck = mBoxed = 0.0f;

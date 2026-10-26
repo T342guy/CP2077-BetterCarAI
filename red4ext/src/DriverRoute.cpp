@@ -131,6 +131,7 @@ void Driver::Build(const LaneGraph& aGraph, const std::vector<Leg>& aLegs, const
     mS.resize(mPath.size());
     for (size_t i = 0; i < mPath.size(); ++i)
         mS[i] = float(i);
+    Swing();
     Profile();
 }
 
@@ -155,7 +156,7 @@ void Driver::MeasureRoom(const LaneGraph& aGraph)
     {
         Point3 a, b;
         float dx, dy, l2;
-        int kind; // 0 road, 1 sidewalk
+        int kind; // 0 road, 1 sidewalk, 2 crosswalk
         bool traffic; // a lane traffic drives (not a shoulder, parking or GPS-only lane)
     };
     std::vector<Seg> segs;
@@ -174,14 +175,15 @@ void Driver::MeasureRoom(const LaneGraph& aGraph)
             {
                 uint16_t flags = aGraph.Flags(lane);
                 bool sidewalk = (flags & kLanePavement) && !(flags & kLaneCrossWalk);
-                if (!(Drivable(flags) || sidewalk))
+                bool crosswalk = (flags & kLaneCrossWalk) != 0;
+                if (!(Drivable(flags) || sidewalk || crosswalk))
                     continue;
                 const auto& geo = mGeo.Get(aGraph, lane);
                 for (size_t k = 0; k + 1 < geo.pts.size(); ++k)
                 {
                     const Point3 &a = geo.pts[k], &b = geo.pts[k + 1];
                     float dx = b.x - a.x, dy = b.y - a.y;
-                    segs.push_back({a, b, dx, dy, dx * dx + dy * dy, sidewalk ? 1 : 0,
+                    segs.push_back({a, b, dx, dy, dx * dx + dy * dy, crosswalk ? 2 : sidewalk ? 1 : 0,
                                     !(flags & (kLaneTrafficDisabled | kLaneNoAIDriving | kLaneNoAutodrive |
                                                kLaneGPSOnly))});
                 }
@@ -196,6 +198,8 @@ void Driver::MeasureRoom(const LaneGraph& aGraph)
             float bestRoad = 1e9f, bestWalk = 1e9f, roadDot = 1.0f;
             for (const Seg& g : segs)
             {
+                if (g.kind == 2)
+                    continue;
                 float u = g.l2 > 1e-6f ? std::clamp(((x - g.a.x) * g.dx + (y - g.a.y) * g.dy) / g.l2, 0.0f, 1.0f) : 0.0f;
                 float z = g.a.z + (g.b.z - g.a.z) * u;
                 if (std::fabs(z - pt.p.z) > 3.0f)
@@ -242,6 +246,15 @@ void Driver::MeasureRoom(const LaneGraph& aGraph)
         int nFound = 0;
         for (const Seg& g : segs)
         {
+            // A crosswalk across the line here.
+            if (g.kind == 2 && g.l2 > 1e-4f && !pt.crosswalk)
+            {
+                float len = std::sqrt(g.l2), dot = (g.dx * t.x + g.dy * t.y) / len;
+                float u = std::clamp(((pt.p.x - g.a.x) * g.dx + (pt.p.y - g.a.y) * g.dy) / g.l2, 0.0f, 1.0f);
+                float x = g.a.x + g.dx * u - pt.p.x, y = g.a.y + g.dy * u - pt.p.y;
+                pt.crosswalk = std::fabs(dot) < 0.6f && x * x + y * y < 1.5f * 1.5f &&
+                               std::fabs(g.a.z + (g.b.z - g.a.z) * u - pt.p.z) < 3.0f;
+            }
             if (g.kind != 0 || g.l2 < 1e-4f)
                 continue;
             float len = std::sqrt(g.l2), dot = (g.dx * t.x + g.dy * t.y) / len;
@@ -394,6 +407,42 @@ void Driver::Flow(float aStartLateral)
     {
         mPath = std::move(path);
         mLimit = std::move(limit);
+    }
+}
+
+// A long vehicle's ends as its centre follows the line: on the line's
+// tangent there, so out past a bend's outside by about a^2/2R, a metres
+// from the centre (a 12 m truck turning on 10 m: 1.8 m, over the oncoming
+// lanes in a right turn). Measured square to the line near each end.
+void Driver::Swing()
+{
+    for (PathPoint& pt : mPath)
+        pt.swingF = pt.swingR = 0.0f;
+    if (!Long() || mPath.size() < 8)
+        return;
+    const float last = float(mPath.size() - 1);
+    for (size_t i = 0; i < mPath.size(); ++i)
+    {
+        Point3 n = NormalAt(i), t{n.y, -n.x, 0};
+        for (float a : {mFront, -mRear})
+        {
+            float at = float(i) + a;
+            if (at < 0.0f || at > last)
+                continue;
+            Point3 q{mPath[i].p.x + t.x * a, mPath[i].p.y + t.y * a, 0};
+            float best = 1e9f, side = 0.0f;
+            for (size_t j = Index(at - 3.0f); j <= Index(at + 3.0f); ++j)
+            {
+                float dx = q.x - mPath[j].p.x, dy = q.y - mPath[j].p.y, d = dx * dx + dy * dy;
+                if (d < best)
+                {
+                    Point3 nj = NormalAt(j);
+                    best = d;
+                    side = dx * nj.x + dy * nj.y;
+                }
+            }
+            (a > 0.0f ? mPath[i].swingF : mPath[i].swingR) = side;
+        }
     }
 }
 

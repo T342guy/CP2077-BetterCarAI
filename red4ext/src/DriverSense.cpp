@@ -237,21 +237,21 @@ void Driver::SetBody(float aFront, float aRear, float aHalfWidth)
         mHalfWidth = aHalfWidth + 0.05f;
 }
 
-// The game's list of vehicles nearby: each matched to the one listed
-// before where that one should be by now (keeping the size learned for
-// it), or new.
+// The game's list of vehicles (and people) nearby: each matched to the one
+// listed before where that one should be by now (keeping the size learned
+// for it), or new.
 size_t Driver::SetVehicles(const std::vector<DriverVehicle>& aList)
 {
     std::vector<bool> matched(mKnown.size(), false);
     for (const DriverVehicle& v : aList)
     {
         int best = -1;
-        float bestD = 3.0f;
+        float bestD = v.person ? 1.5f : 3.0f;
         for (size_t k = 0; k < mKnown.size(); ++k)
         {
             Point3 at = KnownAt(mKnown[k]);
             float d = Dist2(at, v.p);
-            if (!matched[k] && d < bestD && std::fabs(at.z - v.p.z) < 3.0f)
+            if (!matched[k] && mKnown[k].person == v.person && d < bestD && std::fabs(at.z - v.p.z) < 3.0f)
             {
                 best = int(k);
                 bestD = d;
@@ -267,6 +267,13 @@ size_t Driver::SetVehicles(const std::vector<DriverVehicle>& aList)
                 k.front = k.rear = 1.1f;
                 k.half = 0.45f;
             }
+            if (v.person)
+            {
+                k.front = k.rear = k.half = 0.3f;
+                k.person = true;
+                k.anchor = v.p;
+                k.anchorAt = mClock;
+            }
             mKnown.push_back(k);
             matched.push_back(true);
             best = int(mKnown.size() - 1);
@@ -274,6 +281,32 @@ size_t Driver::SetVehicles(const std::vector<DriverVehicle>& aList)
         matched[best] = true;
         Known& k = mKnown[best];
         float fl = std::hypot(v.fwd.x, v.fwd.y);
+        if (v.person)
+        {
+            // Someone on foot: how they moved over the last quarter second
+            // or more, smoothed (the game gives no velocity; a jump no one
+            // walks or runs is a mix-up, not a speed).
+            k.p = v.p;
+            k.fwd = fl > 1e-3f ? Point3{v.fwd.x / fl, v.fwd.y / fl, 0} : Point3{1, 0, 0};
+            k.listed = mClock;
+            float span = mClock - k.anchorAt;
+            if (std::hypot(v.vel.x, v.vel.y) > 0.3f)
+                k.vel = v.vel;
+            else if (span >= 0.25f)
+            {
+                Point3 moved{(v.p.x - k.anchor.x) / span, (v.p.y - k.anchor.y) / span, 0.0f};
+                k.vel = std::hypot(moved.x, moved.y) > 8.0f
+                            ? Point3{}
+                            : Point3{k.vel.x + (moved.x - k.vel.x) * 0.6f, k.vel.y + (moved.y - k.vel.y) * 0.6f, 0.0f};
+                k.anchor = v.p;
+                k.anchorAt = mClock;
+            }
+            if (std::hypot(k.vel.x, k.vel.y) > 0.4f)
+                k.stillSince = -1.0f;
+            else if (k.stillSince < 0.0f)
+                k.stillSince = mClock;
+            continue;
+        }
         // How it moved since last listed: traffic far from the player may
         // be moved without physics, its velocity reading 0 while it goes.
         float since = mClock - k.listed;
@@ -317,7 +350,7 @@ int Driver::Absorb(const Point3& aHit)
     {
         const Known& kn = mKnown[k];
         Point3 at = KnownAt(kn);
-        if (std::fabs(aHit.z - at.z) > 5.0f)
+        if (kn.person || std::fabs(aHit.z - at.z) > 5.0f)
             continue;
         float dx = aHit.x - at.x, dy = aHit.y - at.y;
         float x = dx * kn.fwd.x + dy * kn.fwd.y, y = -dx * kn.fwd.y + dy * kn.fwd.x;
@@ -469,9 +502,34 @@ void Driver::Gather(float aHorizon)
         float gap = s0 - mProgress - mFront;
         if (!onPath || gap < -kBehind || gap > aHorizon + 5.0f)
             continue;
+        const PathPoint& pt = mPath[Index(0.5f * (s0 + s1))];
+        if (kn.person)
+        {
+            // Someone on foot: only on the road or right by its edge (a
+            // long vehicle's ends swing over the kerb), or about to step
+            // onto it (within 4 s at the pace they go), with a little room
+            // round them. (Not the people walking along the pavement.)
+            Point3 n = Normal(0.5f * (s0 + s1));
+            float w = kn.vel.x * n.x + kn.vel.y * n.y, c = 0.5f * (l0 + l1);
+            float hiEdge = std::max(pt.hi, 0.0f) + mHalfWidth, loEdge = std::min(pt.lo, 0.0f) - mHalfWidth;
+            bool on = c < hiEdge + 1.0f && c > loEdge - 1.0f;
+            bool stepping = (c >= hiEdge && w < -0.4f && c + 4.0f * w < hiEdge) ||
+                            (c <= loEdge && w > 0.4f && c + 4.0f * w > loEdge);
+            if (!on && !stepping)
+                continue;
+            Body b{s0 - 0.2f, s1 + 0.2f, l0 - 0.2f, l1 + 0.2f, 2, -1};
+            b.known = int(k);
+            b.measured = true;
+            b.u = kn.vel.x * n.y - kn.vel.y * n.x;
+            b.w = w;
+            b.seenL0 = b.l0;
+            b.seenL1 = b.l1;
+            b.stillFor = kn.stillSince >= 0.0f ? mClock - kn.stillSince : 0.0f;
+            mBodies.push_back(b);
+            continue;
+        }
         // (Beside the road: parked on the sidewalk, or on another road;
         // in a junction, cars on the roads across count.)
-        const PathPoint& pt = mPath[Index(0.5f * (s0 + s1))];
         if (pt.junction ? std::min(std::fabs(l0), std::fabs(l1)) > 25.0f
                         : (l0 > pt.hi + mHalfWidth + 0.3f || l1 < pt.lo - mHalfWidth - 0.3f))
             continue;
@@ -495,6 +553,8 @@ bool Driver::OnKnown(const Point3& p) const
 {
     for (const Known& kn : mKnown)
     {
+        if (kn.person)
+            continue; // (the rays see no one on foot)
         Point3 at = KnownAt(kn);
         float dx = p.x - at.x, dy = p.y - at.y;
         float x = dx * kn.fwd.x + dy * kn.fwd.y, y = -dx * kn.fwd.y + dy * kn.fwd.x;

@@ -107,6 +107,8 @@ local DOING_COLOURS = {
   ["backing up"] = { 1.0, 0.4, 0.4 },
   ["waiting"] = { 1.0, 0.85, 0.4 },
   ["waiting at junction"] = { 1.0, 0.85, 0.4 },
+  ["waiting for someone on foot"] = { 1.0, 0.85, 0.4 },
+  ["waiting to swing wide"] = { 1.0, 0.85, 0.4 },
 }
 
 -- Lane n of m counted from the right, and where it is heading.
@@ -121,7 +123,7 @@ end
 
 local function aheadText(hud)
   if not hud.ahead or hud.ahead < 0 then return "clear" end
-  local what = ({ car = "car", parked = "parked car", stopped = "stopped car", wall = "wall" })[hud.aheadkind] or "something"
+  local what = ({ car = "car", parked = "parked car", stopped = "stopped car", wall = "wall", person = "someone on foot" })[hud.aheadkind] or "something"
   if hud.aheadkind == "car" then
     return string.format("%s %s ahead, %.0f km/h", what, km(hud.ahead), hud.aheadv or 0)
   end
@@ -223,6 +225,12 @@ function Overlay.DrawPanel(ctx)
     end
     if hud.junction and hud.junction >= 0 then
       ImGui.TextColored(1, 0.85, 0.4, 1, string.format("Junction %s ahead: a car across may go", km(hud.junction)))
+    end
+    if hud.people and hud.people > 0 then
+      ImGui.TextColored(1, 0.85, 0.4, 1, string.format("%d %s on foot on the road ahead", hud.people, hud.people == 1 and "person" or "people"))
+    end
+    if hud.crosswalk and hud.crosswalk >= 0 then
+      ImGui.TextColored(1, 0.85, 0.4, 1, string.format("Crosswalk %s ahead with someone by it", km(hud.crosswalk)))
     end
     if hud.left and hud.left >= 0 then
       local eta = speed > 5 and hud.left / (speed / 3.6) or nil

@@ -1,10 +1,16 @@
 # Research notes (game v2.5)
 
+<!-- ANCHOR: intro -->
+
 Symbols were taken from public decompiled 2.31 scripts and every hooked symbol was
 checked against the 2.5 `r6/cache/final.redscripts`. The `.reds` files compile
 against the 2.5 bundle with the game's `scc.exe`.
 
+<!-- ANCHOR_END: intro -->
+
 ## Why traffic panics from a tap
+
+<!-- ANCHOR: traffic-panic -->
 
 `VehicleObject.OnVehicleBumpEvent` → `HandleTrafficBump(impact)` (impact = velocity change, m/s):
 
@@ -23,7 +29,11 @@ The same function also starts 2.x *aggressive crowd* combat.
   `VehicleHorn`, `TooCloseDistance`) for mounted NPCs unless the vehicle had a hard impact
   in the last 3 s or the player is in combat. Police (`IsPrevention`) is untouched.
 
+<!-- ANCHOR_END: traffic-panic -->
+
 ## Autodrive
+
+<!-- ANCHOR: autodrive -->
 
 - `AutoDriveSystem` (script) extends `NativeAutodriveSystem` (native). The drive command
   (`DoStartDriveToPointAutonomousAutodrive`) only passes the destination. Speed, steering and
@@ -53,7 +63,11 @@ TweakXL doesn't support 2.5, so `profiles.lua` clones these records at runtime w
 (`TweakDB:CloneRecord`/`SetFlat`/`Update`) and points the mounted vehicle's
 `drivingParamsAutodrive` at the clone for the current mode.
 
+<!-- ANCHOR_END: autodrive -->
+
 ## Limits
+
+<!-- ANCHOR: limits -->
 
 - The path follower, lane changes and traffic-light handling are native. `clearTrafficOnPath` and
   `forceGreenLights` exist only on quest-issued AI commands, not on the player autodrive command.
@@ -199,7 +213,11 @@ TweakXL doesn't support 2.5, so `profiles.lua` clones these records at runtime w
 - The vehicle blackboard `Collision` flag can stay true for the rest of the drive after a crash. Only its
   rising edge means anything (the recorder trigger already used it; the analyser now does too).
 
+<!-- ANCHOR_END: limits -->
+
 ## RED4ext plugin
+
+<!-- ANCHOR: plugin -->
 
 - RED4ext v1.30.0 runs on 2.5 (product 2.50, file 3.0.88.46235) and loads addresses from the game's own
   `bin/x64/cyberpunk2077_addresses.json` (1,032,136 addresses). RED4ext.SDK master supports 2.5 (#227).
@@ -220,8 +238,8 @@ TweakXL doesn't support 2.5, so `profiles.lua` clones these records at runtime w
     Matching scans against a recording made 20 s after each scan (`path scan follow-up`) is what tells these
     apart.
 - That polyline is a traffic lane outline. RTTI layout (from the type dump):
-  `worldTrafficLanePersistent` [0xA0]: outLanes +0x00, inLanes +0x10, outline array<Vector3> +0x20,
-  accumulatedLengths array<Float> +0x30, polygon +0x50, nodeRefHash +0x70, length +0x78, width +0x7C,
+  `worldTrafficLanePersistent` [0xA0]: outLanes +0x00, inLanes +0x10, outline `array<Vector3>` +0x20,
+  accumulatedLengths `array<Float>` +0x30, polygon +0x50, nodeRefHash +0x70, length +0x78, width +0x7C,
   flags +0x88, laneNumber +0x8C, isReversed +0x90, maxSpeed +0x91.
   `worldTrafficPersistentData.lanes` is the whole lane table. `worldTrafficLaneUID` = {nodeRefHash, laneNumber}.
   `worldTrafficSplineNode` (the source data) carries `noAIDriving` / `noAutodrive`.
@@ -347,7 +365,7 @@ TweakXL doesn't support 2.5, so `profiles.lua` clones these records at runtime w
     repair on it (`scan_harness.exe lanegraph.txt`).
   - Missing links are not added (that needs engine allocations). The planner already routes through these
     junctions, so the geometry is what matters.
-  - Before/after: `docs/images/tjunction_repair.png`.
+  - Before/after: `docs/src/images/tjunction_repair.png`.
 - v0.11 in game: `lane_repairs.txt` shows the 40 lanes repaired at load, including #16381/16383/16384/16388.
   The user still saw the jog at the T-junction. The blue route line reads lane outlines live, so the route
   there must use lanes other than the repaired ones; it needs a route dump at the junction.
@@ -385,7 +403,11 @@ TweakXL doesn't support 2.5, so `profiles.lua` clones these records at runtime w
   - install.sh now copies to a new file and renames it into place, so a running game keeps the old file.
   - Quit crashes from before the plugin existed (2026-10-20, older game build) are in the game's own code.
 
+<!-- ANCHOR_END: plugin -->
+
 ## BCAI Autodrive+, our own driving AI (plugin 0.14+)
+
+<!-- ANCHOR: v014 -->
 
 Goal: replace the game's native path follower with our own driver, BCAI Autodrive+. It plans over the
 repaired lane graph, steers along the lane line and sets its speed from the route speed planner.
@@ -620,7 +642,11 @@ Two rules were tried and dropped after the bisect below: braking to drop behind 
 
 The simulated crossing cars never stop and are timed to meet the car, so most of those touches can't be avoided without slowing at every junction. The simulator still has artefacts: other cars at a fixed sideways offset fold back on themselves through tight turns, and simulated cars don't avoid each other.
 
+<!-- ANCHOR_END: v014 -->
+
 ## A drive on hilly roads (plugin 0.21)
+
+<!-- ANCHOR: v021 -->
 
 The first in-game drive with 0.20 (two Quadras and a Hellhound, trace on) showed three faults the simulator can't reproduce, because its sensor model has no own car and no traffic that drops out of view.
 
@@ -633,7 +659,11 @@ The first in-game drive with 0.20 (two Quadras and a Hellhound, trace on) showed
 
 Simulator, against 0.20: single obstacles 1051/1080 clean (12 touches, 17 never arrived) against 1045 (16, 20). Traffic stays within the run-to-run spread: on two sets of 400 scenes, 123 and 110 scenes with a touch, against 115 and 107. A first version of the caution rule, which also skipped cars not yet measured unless it could stop gently, made touches with crossing cars faster (average 43 km/h against 31) and was dropped.
 
+<!-- ANCHOR_END: v021 -->
+
 ## Lanes, junctions and overtaking (plugin 0.22)
+
+<!-- ANCHOR: v022 -->
 
 From a drive with 0.21 (Herrera Outlaw, city and highway, trace on):
 
@@ -650,7 +680,11 @@ From a drive with 0.21 (Herrera Outlaw, city and highway, trace on):
 
 The simulator's crossing cars now set off from real crossings on both routes (`crossings_D1.txt`, `crossings_D2.txt` in the scratch tools). Against 0.21, over 400 scenes on each of two seeds: 89 and 95 scenes with a touch against 86 and 92, touches with crossing cars at the same average speed (31 and 28 km/h), and 1054/1080 clean single obstacles against 1051.
 
+<!-- ANCHOR_END: v022 -->
+
 ## Highway lane drops and the shoulder (plugin 0.23)
+
+<!-- ANCHOR: v023 -->
 
 0.22 on the highway zigzagged between lanes, overtook on the shoulder and hit a railing at 130 km/h. From its trace and a simulator reproduction:
 
@@ -662,7 +696,11 @@ The simulator's crossing cars now set off from real crossings on both routes (`c
 
 The simulator now also counts metres driven off the mapped road and how many sideways moves of 2 m or more it chose. There are new highway scenes on three 3.6–4.3 km highway routes with 5–12 cars in the lanes either side and its own (slower or about its speed): `hwytraffic.py` and `hwy_score.sh` in the scratch tools. Over 200 scenes: 0.22 had 5 with a touch and 4.4 big moves per drive (up to 35 in one); 0.23 has 3 with a touch, 1.8 per drive (up to 15), and no metres off the road. City scenes and single obstacles are unchanged (94 and 95 scenes with a touch against 89 and 95; 1050/1080 clean).
 
+<!-- ANCHOR_END: v023 -->
+
 ## The game's vehicle list, and other cars (plugin 0.24)
+
+<!-- ANCHOR: v024 -->
 
 Two changes: Autodrive+ now asks the game where nearby vehicles are, instead of only guessing from ray hits, and it fits itself to the car it drives.
 
@@ -712,7 +750,11 @@ Off-road metres are judged against each car's real width. Results, 0.23 → 0.24
 
 The Hellhound-like car's highway off-road metres (about 270 in 200 drives) are 6 m per drive at one tight bend on one route, where a 2.4 m-wide car that turns wide doesn't fit inside the mapped room.
 
+<!-- ANCHOR_END: v024 -->
+
 ## A fairer simulator, overtaking and braking (plugin 0.25)
+
+<!-- ANCHOR: v025 -->
 
 **Simulator realism.** Three faults in the simulated traffic made touches that couldn't happen in the game, for every car:
 - Simulated cars never slowed down, so at tight bends they drove into the back of this car. Cars on the route now follow it with a plain car-following model when it is ahead of them in their lane (`BCAI_BLIND=1` turns that off).
@@ -744,7 +786,11 @@ The Mai Mai-like car's extra off-road metres on seed 7 come from one scene (T006
 
 The Hellhound-like car's highway off-road metres are almost all at one spot on route H3: the game's route makes a U-turn on the highway (radius about 3 m), which no wide car can follow. That is a route problem (the game's navpath), not a driving one.
 
+<!-- ANCHOR_END: v025 -->
+
 ## Driving styles, keeping right and not changing its mind (plugin 0.26)
+
+<!-- ANCHOR: v026 -->
 
 From the first drives in the game (read from the Autodrive+ lines in `BetterCarAI.log`):
 - **Flip-flopping:** the lane it headed for stepped back and forth (+5 → +2.5 → +1 → 0 → +2 m) within a few seconds. Small changes in how clear each lane looked outweighed the costs of switching.
@@ -794,7 +840,11 @@ Left over:
 
 **Overlay:** airborne now comes from the game's `VehicleObject.IsInAir()`. The ground under the car is found with a ray against the world's static meshes, then against the `Terrain` collision group (dirt roads and open ground aren't static meshes, which is why they read as airborne before). It is named from the hit's physics material: road, dirt, grass or other. The plugin's `BCAI_DriverHud` reports what it is doing for the panel, and `BCAI_DriverAhead` puts the planned speed in W so the line can be coloured.
 
+<!-- ANCHOR_END: v026 -->
+
 ## Code layout, the decision log, NPC reactions (plugin 0.27)
+
+<!-- ANCHOR: v027 -->
 
 **Driver split.** `Driver.cpp` (3,300 lines, one class) is now `Driver.hpp` (shared types, the style table `kStyles`, the class) and five files: `Driver.cpp` (interface, Step split into Feel / KeepOnRoute / Steer / TargetSpeed / Pedals / Unstick), `DriverRoute.cpp` (A*, the line, room, speed plan), `DriverSense.cpp` (rays, vehicle list, bodies), `DriverLanes.cpp` (Avoid split into Survey / JudgePassing / Score / Options / Choose / Commit / WatchJunction / FindDoor), `DriverReport.cpp` (overlay, log, events). Every style-dependent number lives in `kStyles`. The split was checked to drive exactly as before: `tests/sim/same.sh` compares 1,620 drives (all cars and styles) by a hash of every control output, with `-ffp-contract=off` builds (else moving code between files changes which multiply-adds get fused). 1,620 of 1,620 matched, and again after adding the event log.
 
@@ -826,7 +876,11 @@ Single obstacles: as clean or cleaner except madman Hellhound (7 → 10 of 1,080
 - Taps escalate: honk, then honk and flash (`VehicleComponent.HonkAndFlash`, reached through an added method), and at the 4th tap within 30 s the driver gets the `Bump` stim from the player (what vanilla sends a driver bumped too often) and its reactions go through for 10 s: panic driving, getting out, or with aggressive crowds on, combat (the game's own checks: within 5 m of the player, no heat, not in combat).
 - Panic driving (`BaseDrivingParameters.panic`: `topSpeed`, `boostMaxSpeed`, `curvatureLookupRange`) is tuned in CET: 0.85× speed, 1.5× bend look-up, so fleeing drivers crash less. The vanilla values are written to the log once. The dent scale (0.1 = a crash) is a guess; `Traffic |` lines log the dent sizes to tune it.
 
+<!-- ANCHOR_END: v027 -->
+
 ## Navigation: our own routes to the map destination (plugin 0.28)
+
+<!-- ANCHOR: v028 -->
 
 **The game's GPS.** The route on the minimap and world map comes from `gamegpsGPSSystem` (native, ticked as `[U]/GPSSystem/Tick`, settings in `gamegpsSettings`). The minimap's widgets for it (`m_gpsPlayerTrackedPathWidget`, `m_gpsQuestPathWidget`, `m_gpsDelamainPathWidget`) are native too. No script function returns or sets the route. Scripts can only reach the destination:
 - `MappinSystem.GetManuallyTrackedMappinID()`;
@@ -892,7 +946,11 @@ The GPS plans over the traffic lane table: every `worldTrafficLanePersistent` ha
   - It writes `Route |` lines to the log.
 - *Untested in game:* all of it. In particular, which height a custom map pin really has, and how often the game's autodrive point differs from the pin.
 
+<!-- ANCHOR_END: v028 -->
+
 ## Pedals, the game's autodrive HUD, trucks and walkways (plugin 0.29)
+
+<!-- ANCHOR: v029 -->
 
 From the user's notes on 0.28.
 
@@ -977,7 +1035,11 @@ Setting `AutoDriveEnabled` also switches the player to the autodrive input conte
 - the teleport, the driving test's recording, and `IsSkidding(0.3)`;
 - the ribbon line.
 
+<!-- ANCHOR_END: v029 -->
+
 ## Grip, steering reach, the driving test and turning round (plugin 0.30)
+
+<!-- ANCHOR: v030 -->
 
 **What the first driving tests measured** (2026-10-25: Quadra Type-66 Avenger and GT, Aerondight; the player's drives):
 - Sideways acceleration (from how the velocity turns, cross-checked from the driven line's curvature) reached about 2 g, e.g. a 20 m radius at 72 km/h.
@@ -1013,3 +1075,27 @@ Setting `AutoDriveEnabled` also switches the player to the autodrive input conte
 **Own car's size:** rays from 6 m, then from 15 m if nothing is found (a truck); the record size isn't used for it any more.
 
 **Untested in game (0.30):** all of the above, the map pin for random tests, and how the in-game slip stiffness and full-lock turn are learned.
+
+<!-- ANCHOR_END: v030 -->
+
+## People on foot and wide turns (plugin 0.31)
+
+<!-- ANCHOR: v031 -->
+
+**People on foot.** Autodrive+ was blind to them: the targeting query in `BCAIOwnDriver.Vehicles` filtered out `Obj_Puppet`, vehicle rays use the `Vehicle` collision group and wall rays `World Static`.
+- The script side now runs the query without the puppet filter while *Watch for people on foot* is on and lists each `NPCPuppet` that is `ScriptedPuppet.IsActive`, not `VehicleComponent.IsMountedToVehicle`, within 100 m (60 m was too short: a truck at 65 km/h saw a crosser 48 m out and couldn't stop). They go to `BCAI_DriverVehicles` in the vehicle format with W +4 and no velocity; the plugin works it out from listed positions over 0.25 s or more, smoothed, ignoring jumps over 8 m/s.
+- A person is a body of kind 2 (0 vehicle, 1 wall), only while on the road or within 1 m of its edge (a long vehicle's ends swing over the kerb), or walking onto it within 4 s. Clearance gives them 0.5 m more room than the car's half width, follows them walking across for up to 6 s (cars crossing: 2.5 s), grows their box by 0.3 m a second (up to 1 m: they change their minds) and waits for anyone moving across at over 0.4 m/s instead of swerving round them. It stops 4 m short, planning the stop at min(4.5, 0.6 × braking) m/s² so it starts early.
+- Someone standing in the road (not crossing) is gone round after the style's `standingAfter`, at about 15 km/h, keeping 0.5 m from them alongside; boxed in close behind them it may back up for room (not for someone crossing). The rays' hits are never matched to people (`Absorb`, `OnKnown`), and people are left out of the oncoming-traffic checks.
+- Crosswalks: lane flag 256 (3,472 lanes, mostly `0x012B`). `MeasureRoom` marks path points where a crosswalk segment crosses the line (within 1.5 m, |dot| < 0.6). *City* (`StyleRules::crosswalkCare`) slows for a crosswalk within 40 m with a listed person within 4 m of it to √(2 · 2.5 · (gap − 2)) + 4 m/s; only slowing, never waiting (people stand at crosswalks for the lights).
+- Simulator: `BCAI_PEOPLE` (listed only, no velocity, as in game); `people_score.sh` on `randpeople.py` scenes (300 per run: crossers at crosswalks and mid-block stepping off 25-90 m ahead, pavement walkers, people standing at the kerb; the styles in turn), each driven again without the people. A hit counts as one it could have stopped for when the person set off further away than half a second of driving plus braking at min(6, 0.9 × the car's braking) m/s², plus 3 m, and wasn't walking into the car's side. Seed 7, against the same build with people unlisted (as 0.30): hits it could have stopped for 119 → 1 (default car), 139 → 5 (Hellhound), 110 → 0 (Maimai), 151 → 9 (truck); all hits 206 → 46 (default). People cost 5-7% of the time; pavement walkers and standers about 0 (City under 1%, the crosswalks). D1 passes its own start again at about 1440 m, so a crosser near 95 m ends up standing in that later road: a ready-made test for going round someone standing.
+
+**Long vehicles at tight turns.** The 12 m sim truck touched other cars in 67/61 of 400 city drives (seeds 7/11), 35/31 of them oncoming cars, at about 7 km/h. A replay showed why: on full lock in a right turn (radius about 8 m) the centre follows the line but the body is on its tangent, so the front end is about a²/2R out past the outside of the bend (6 m: 2.2 m), over the oncoming lane. `Clearance` checked the body as if it bent with the path.
+- `Driver::Swing` gives every path point the rigid body's front and rear offsets off the line with the centre there (`PathPoint::swingF`, `swingR`; in the plan dump), only for vehicles over 7 m (`Long()`), so cars are untouched (`same.sh`: 1,620 drives, all the same).
+- `Clearance` adds the swing, less 0.3 m (`SwingAt`, interpolated by (a/front)²): its 0.6 m margin already covers that much, and the full swing left the truck stuck behind parked cars on gentle bends it had passed cleanly.
+- `WatchWideTurn`: the stretch ahead (80 m) where an end comes within 0.3 m of its own side's edge with oncoming lanes beyond (judging only then whether a car there would really be reached, from where it is); while any vehicle coming the other way would be in the swept stretch while the truck is (its planned speed through, from a standstill if waiting, plus 2.5 s, or 1.2 s for a madman), it stops 1 m before it ("wide turn: oncoming", "waiting to swing wide"). A 0.3 m margin past the edge was too late: the truck waited with its body already out.
+- Results: touches 67/61 → 35/25, oncoming 35/31 → 5/3 (most of those left: simulated oncoming cars, which don't brake, driving into the truck waiting), highway unchanged; 3 more drives in 800 stuck behind a parked car the truck used to scrape past; single obstacles 1,044 → 1,051 clean of 1,080.
+- Not done: moving the line towards the inside of bends for long vehicles.
+
+**Untested in game (0.31):** whether the targeting query returns crowd NPCs, and how many; people's positions and walking speeds as the plugin works them out; the crosswalk slowing; the truck's waits.
+
+<!-- ANCHOR_END: v031 -->

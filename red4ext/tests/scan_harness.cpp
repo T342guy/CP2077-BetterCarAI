@@ -297,6 +297,12 @@ static int DriveDump(const char* aPath, float x0, float y0, float hx, float hy, 
         // (where the route comes back near itself): in the game it would be
         // on that other road, so it isn't there for this car.
         bool hidden = false;
+        // Someone on foot (BCAI_PEOPLE): the rays don't see them, the game
+        // lists them (without a velocity); a walker crossing stops on the far
+        // side (latEnd).
+        bool person = false;
+        float latEnd = 0.0f;
+        float setOffD = -1.0f, setOffV = 0.0f; // how far off this car was, and how fast, when they set off
     };
     std::vector<Other> others;
     std::vector<BCAI::Point3> track = BCAI::DriverAhead(6000.0f, 1.0f);
@@ -323,9 +329,39 @@ static int DriveDump(const char* aPath, float x0, float y0, float hx, float hy, 
                 break;
             p = next + 1;
         }
+    // BCAI_PEOPLE="along,lateral,speed along,speed across[,starts when the car
+    // is this close[,lateral where they stop]]";... people on foot (0.5 x 0.5
+    // m); one crossing stops there (else as far out on the other side as it
+    // started).
+    if (const char* e = getenv("BCAI_PEOPLE"))
+        for (const char* p = e; *p;)
+        {
+            Other o{0, 0, 0, 0, 0, true};
+            float latEnd = 1e9f;
+            int n = sscanf(p, "%f,%f,%f,%f,%f,%f", &o.along, &o.lat, &o.u, &o.w, &o.trigger, &latEnd);
+            if (n >= 2)
+            {
+                o.along -= 3.0f;
+                o.going = o.trigger <= 0.0f;
+                o.length = o.width = 0.5f;
+                o.person = true;
+                o.latEnd = latEnd < 1e8f ? latEnd : -o.lat;
+                others.push_back(o);
+            }
+            const char* next = strchr(p, ';');
+            if (!next)
+                break;
+            p = next + 1;
+        }
     for (Other& o : others)
         o.cruise = o.u;
     bool haveObstacle = !others.empty() && track.size() > 4;
+    int peopleHit = 0, people = 0, peopleAvoidable = 0;
+    static bool peopleBlind = getenv("BCAI_PEOPLE_BLIND") != nullptr; // not listed: as before 0.31
+    bool hittingPerson = false;
+    float closestPerson = 1e9f;
+    for (const Other& o : others)
+        people += o.person;
     static bool blind = getenv("BCAI_BLIND") != nullptr;
     // This car along the route and sideways of it (left +), for the traffic behind it.
     float ownAlong = 0.0f, ownLat = 0.0f;
@@ -421,14 +457,20 @@ static int DriveDump(const char* aPath, float x0, float y0, float hx, float hy, 
             locate();
         if (haveObstacle)
         {
-            bool touch = false;
-            int touched = -1;
+            bool touch = false, touchPerson = false;
+            int touched = -1, touchedPerson = -1;
             for (Other& o : others)
             {
                 place(o);
                 if (!o.going && std::hypot(o.c.x - pos.x, o.c.y - pos.y) < o.trigger)
+                {
                     o.going = true;
-                if (o.going && !blind && o.cruise > 0.0f && o.w == 0.0f)
+                    o.setOffD = std::hypot(o.c.x - pos.x, o.c.y - pos.y);
+                    o.setOffV = v;
+                }
+                if (o.person && o.w != 0.0f && (o.w > 0.0f ? o.lat >= o.latEnd : o.lat <= o.latEnd))
+                    o.w = 0.0f; // across: stays on the far side
+                if (o.going && !blind && o.cruise > 0.0f && o.w == 0.0f && !o.person)
                 {
                     // Following this car when it is ahead in the lane (a
                     // plain car-following model), else back to its speed.
@@ -455,6 +497,21 @@ static int DriveDump(const char* aPath, float x0, float y0, float hx, float hy, 
                 o.hidden = std::fabs(o.along - ownAlong) > 60.0f && d < 30.0f;
                 if (o.hidden)
                     continue;
+                if (o.person)
+                {
+                    // How near this car's body comes to them.
+                    float dx = o.c.x - pos.x, dy = o.c.y - pos.y;
+                    float x = std::fabs(dx * fwd.x + dy * fwd.y) - 0.5f * car.length,
+                          y = std::fabs(-dx * fwd.y + dy * fwd.x) - 0.5f * car.width;
+                    closestPerson = std::min(closestPerson, std::hypot(std::max(x, 0.0f), std::max(y, 0.0f)));
+                    if (overlap(pos, fwd, 0.5f * car.length, 0.5f * car.width, o.c, o.dir, 0.25f, 0.25f) &&
+                        std::fabs(v) > 0.3f)
+                    {
+                        touchPerson = true;
+                        touchedPerson = int(&o - others.data());
+                    }
+                    continue;
+                }
                 if (d < closest)
                 {
                     closest = d;
@@ -466,6 +523,31 @@ static int DriveDump(const char* aPath, float x0, float y0, float hx, float hy, 
                     touched = int(&o - others.data());
                 }
             }
+            if (touchPerson && !hittingPerson)
+            {
+                ++peopleHit;
+                const Other& o = others[touchedPerson];
+                // (Could it have stopped? From when they set off: half a
+                // second to see it, then braking at 6 m/s^2, or what this
+                // car's brakes manage if less.)
+                float stopDecel = std::min(6.0f, 0.9f * car.brakeK);
+                bool couldStop = o.setOffD > 0.0f &&
+                                 o.setOffD > o.setOffV * 0.5f + o.setOffV * o.setOffV / (2.0f * stopDecel) + 3.0f;
+                // (Where on this car: a person walking into its side
+                // after its front has passed isn't something braking helps.)
+                float bx = (o.c.x - pos.x) * fwd.x + (o.c.y - pos.y) * fwd.y;
+                bool side = bx < 0.5f * car.length - 0.8f;
+                couldStop = couldStop && !side;
+                peopleAvoidable += couldStop;
+                printf("  ! t %5.1f s at (%.1f, %.1f): hit a person, speed %.1f km/h (person %d: %.0f m along, %+.1f "
+                       "sideways, %.1f m/s, %+.1f m/s across; this car %.0f m along; they set off %.0f m away at %.0f "
+                       "km/h: %s; %s)\n",
+                       t, pos.x, pos.y, v * 3.6f, touchedPerson, o.along + 3.0f, o.lat, o.u, o.w, dist, o.setOffD,
+                       o.setOffV * 3.6f, couldStop ? "it could have stopped" : "too late to stop",
+                       side ? BCAI::Format("they walked into its side, %.1f m behind its front", 0.5f * car.length - bx).c_str()
+                            : "at its front");
+            }
+            hittingPerson = touchPerson;
             if (touch && !touching)
             {
                 ++contacts;
@@ -481,13 +563,20 @@ static int DriveDump(const char* aPath, float x0, float y0, float hx, float hy, 
         // without physics).
         static bool list = getenv("BCAI_LIST") != nullptr;
         static bool listStill = list && !strcmp(getenv("BCAI_LIST"), "still");
-        if (list && haveObstacle && steps % 6 == 0)
+        // (People are always listed, within 100 m, as the game's script side
+        // lists them: without a velocity.)
+        if ((list || people > 0) && haveObstacle && steps % 6 == 0)
         {
             std::vector<BCAI::DriverVehicle> listed;
             for (const Other& o : others)
-                if (std::fabs(o.lat) < 999.0f && !o.hidden && std::hypot(o.c.x - pos.x, o.c.y - pos.y) < 120.0f)
-                    listed.push_back({o.c, o.dir, listStill ? BCAI::Point3{} : o.vel,
-                                      o.cruise == 0.0f && o.w == 0.0f && !o.stopped, o.width < 1.0f});
+                if (o.person ? !peopleBlind && std::hypot(o.c.x - pos.x, o.c.y - pos.y) < 100.0f
+                             : list && std::fabs(o.lat) < 999.0f && !o.hidden &&
+                                   std::hypot(o.c.x - pos.x, o.c.y - pos.y) < 120.0f)
+                {
+                    listed.push_back({o.c, o.dir, listStill || o.person ? BCAI::Point3{} : o.vel,
+                                      o.cruise == 0.0f && o.w == 0.0f && !o.stopped && !o.person, o.width < 1.0f && !o.person});
+                    listed.back().person = o.person;
+                }
             BCAI::DriverVehicles(listed);
         }
         // BCAI_OTHERS_AT=t: where this car and the others are at t (along the route, sideways, speed).
@@ -531,7 +620,7 @@ static int DriveDump(const char* aPath, float x0, float y0, float hx, float hy, 
             {
                 if (!haveObstacle || ray.kind != 0)
                     break;
-                if (o.hidden)
+                if (o.hidden || o.person)
                     continue;
                 const BCAI::Point3 &oc = o.c, &od = o.dir;
                 // Into the box's frame, then the slab test.
@@ -692,7 +781,10 @@ static int DriveDump(const char* aPath, float x0, float y0, float hx, float hy, 
     printf("  off the road: %.0f m, %d moves of 2 m or more, %d changes of mind\n", offRoad, BCAI::DriverBigMoves(),
            BCAI::DriverDithers());
     if (haveObstacle)
-        printf("  %zu other cars: %d contacts, closest centre-to-centre %.1f m\n", others.size(), contacts, closest);
+        printf("  %zu other cars: %d contacts, closest centre-to-centre %.1f m\n", others.size() - people, contacts, closest);
+    if (people > 0)
+        printf("  %d people: %d hit, closest %.1f m, %d hits it could have stopped for\n", people, peopleHit, closestPerson,
+               peopleAvoidable);
     printf("  end (%.1f, %.1f), %.1f m from the goal\n", pos.x, pos.y, aGoal ? std::hypot(pos.x - x1, pos.y - y1) : 0.0f);
     if (getenv("BCAI_DIGEST"))
         printf("  digest %016llx\n", (unsigned long long)digest);

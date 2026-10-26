@@ -1,5 +1,8 @@
 # Better Car AI (Cyberpunk 2077 v2.5)
 
+Documentation and research notes: https://t342guy.github.io/CP2077-BetterCarAI/ (built from `docs/` with mdBook).
+
+<!-- ANCHOR: features -->
 - **BCAI Autodrive+** (needs the native plugin): the mod's own driving AI, in three driving styles you pick when it starts: **City** (by the rules), **Aggressive** (fast and hard) and **Madman** (as fast as it can without crashing). See below.
 - **Better routes to the map destination** (needs the native plugin): the mod plans its own route to your map pin or tracked quest, for time rather than distance (highways, fewer junctions, fewer left turns across traffic, no needless U-turns), and ends it on the pin's level: a pin under a highway or next to a bridge gets a route to the street, not onto the road above it, and a pin up on a walkway (a quest high in a megabuilding) gets a route to the road you can walk up to it from. It draws the route on the road ahead with the next turn at the top of the screen, and plans again when you leave it. Autodrive+ drives the same planner's route. See *Navigation* below.
 - **Calm traffic:** a light tap no longer makes NPC drivers flee, bail out, get knocked out or start a fight, and people on the pavement no longer run from a fender-bender next to them. A tapped driver honks (with a voice line) and keeps driving; tapped again soon after, it honks and flashes its lights; keep tapping the same car (4 taps within 30 s by default) and the driver loses patience and reacts the game's way (drives off in a panic, or gets out). Hard crashes, gunfire, drawn weapons, combat and the police still get the vanilla reactions.
@@ -9,7 +12,9 @@
 - **AI drive** (the default for autodrive): native autodrive holds about 86 km/h no matter what, so when you start autodrive the mod turns it off and drives the car with the AI command police and quest drivers use. That command honours the aggressive max speed and traffic clearing. It drives to the autodrive destination, or straight down the road if none is set, and brakes to a stop on arrival. Steer, accelerate or brake to take back control. Turn off *The game's autodrive starts AI drive* (in *Older drivers & tuning*) to get vanilla autodrive back; Delamain cab rides are never taken over. It also has its own hotkey.
 - **Stability governor** (AI drive): slows the car while it slides sideways, weaves after an overcorrection, is airborne, or is about to crest a rise fast enough to take off, and keeps a 2 s gap behind a car straight ahead so a dodge happens at a survivable speed. It also learns **trouble spots**: places where AI drive snapped the wheel or took a bend far too fast with no car around (usually a kink in the game's lane path at a junction). It saves them to `trouble_spots.json` and slows to a set speed (default 60 km/h) before them next time. The *Older drivers & tuning* window's *AI drive* tab shows how many it has learned and has a button to forget them all.
 - **NPC traffic tuning:** AI-driven NPC cars get more confident cornering and a longer look-ahead.
+<!-- ANCHOR_END: features -->
 
+<!-- ANCHOR: install -->
 ## Requirements
 - Cyber Engine Tweaks
 - redscript (+ RED4ext)
@@ -22,11 +27,13 @@
 ./install.sh --uninstall
 ```
 Or copy `r6/` and `bin/` into the game folder.
+<!-- ANCHOR_END: install -->
 
 ## Use
+<!-- ANCHOR: use -->
 Open the CET overlay. The **Better Car AI** window has:
 - **Autodrive+:** whether it is driving (speed, what it is doing, the style) and a *Start/Stop* button.
-- **Driving style:** City, Aggressive or Madman, with what each does. Each style keeps its own settings (top speed, speed vs the speed limit, cornering grip, braking, following distance) under *<style> settings*; they apply at once, even while it drives.
+- **Driving style:** City, Aggressive or Madman, with what each does. Each style keeps its own settings (top speed, speed vs the speed limit, cornering grip, braking, following distance) under *City settings* (and so on); they apply at once, even while it drives.
 - *Ask which style each time it starts* (on by default), *The game's autodrive button starts Autodrive+*, and *Show the game's autodrive HUD while it drives* (on by default: the wheel icon on the minimap and the side panel with the distance and time left, as for the game's own autodrive).
 - **Navigation:** your own route to the map destination: on or off, drawn on the road, the next turn, and the route it has now.
 - **NPC traffic:** calm traffic (and the impact speed that still counts as a crash), honking, people nearby staying calm, how many taps before a driver loses patience, faster traffic, calmer panic driving.
@@ -38,7 +45,9 @@ Most changes apply when the overlay closes (or with *Apply now*); the style sett
 **Style picker:** when Autodrive+ starts (button, hotkey or the game's autodrive button), a picker shows the three styles for 6 s. Steer left/right to choose, then press the autodrive button (G) again, or accelerate, to start with the highlighted style (it starts once you let go of the controls); brake to cancel. When the time runs out it starts with the highlighted style. With the CET overlay open you can click a style instead. Turn the picker off to start straight away with the chosen style.
 
 **Hotkeys** (CET > Bindings > Better Car AI): *Autodrive+: start / stop*, *next driving style*, one for each style (they also switch styles while it drives), *Overlay: show / hide*, *Overlay: compact / normal / everything*, the lane map, saving a recording, and the older drivers' toggles.
+<!-- ANCHOR_END: use -->
 
+<!-- ANCHOR: overlay -->
 **Visual debug overlay:** bind *Overlay: show / hide* (or tick it in the main window). It draws, over the game (each layer can be switched off):
 - Autodrive+'s planned line, coloured by the speed it plans there against the speed now (blue: as fast; yellow, orange, red: slowing), with the slowest point ahead labelled; the road's edges (grey); what its sensor sees (orange cars, red walls) and what is in its way (magenta, labelled with its distance and speed). Without Autodrive+, the game's route in blue (with the plugin);
 - the destination (a tall magenta pillar, with a line to it);
@@ -49,10 +58,13 @@ Most changes apply when the overlay closes (or with *Apply now*); the style sett
 Its panel (compact, normal or everything) shows the speed, and while Autodrive+ drives: its target and the road's speed, what it is doing (cruising, following, overtaking, going round, dropping back, waiting at a junction...) and what is holding its speed down, what is ahead, which lane it is in and heading for (counted from the right), the next slow-down, the distance to the destination, its throttle, brake and steering, and its latest decisions (three, or six with *everything*) with how long ago each was. It also shows what is under the car: road, dirt, grass (with the game's name for the surface), or *airborne* only when the game says the car is in the air. *Everything* adds the drive's statistics (metres off the road, replans, lane changes, changes of mind), the grip it corners at (a new car starts at 1 g and builds up to the style's while it takes bends cleanly; less where it slid), the car's own figures from the game's records (mass, size, tyre friction front and rear, how hard its brakes could stop it, engine torque, steering lock) and a colour legend. The world measurements refresh 30 times a second, the panel every frame.
 
 **Drive recorder:** while you're in a vehicle, the mod keeps the last 60 s of driving (10 samples a second): position, heading, velocity, speed, sideways slip, turn rate, ground contact, the look-ahead rays, the AI command's speed caps, the stability governor, RPM, gear, suspension forces and collisions. When AI drive spins out, crashes above 36 km/h or stops dead (hard braking and your own driving after you take over don't count), it saves the recording 5 s later as `rec_<date>_<time>.csv` in the CET mod folder. Bind *Save drive recording* (or use the button in the debug window's *Recorder* tab) to save one by hand. `tools/analyze_recording.py rec_....csv --png out.png` explains in plain words what happened around the wipe-out, lists every steering snap (the driver yanking the wheel at speed) with what was ahead, prints a second-by-second table, and with `--png` draws a map of the incident plus speed, turn-rate-vs-grip and slip-angle graphs with snaps marked (needs Pillow). The AI's actual steering input isn't readable from scripts, so steering is estimated from the turn rate.
+<!-- ANCHOR_END: overlay -->
 
+<!-- ANCHOR: autodrive -->
 **BCAI Autodrive+ (experimental, needs the native plugin):** the mod's own driving AI, replacing the game's. It plans its route over the city's lane map, to the map destination or along the road without one. It works the car's throttle, brake and wheel itself, so the car still drives on the game's real physics.
 - **Flowing line:** it doesn't trace the lanes exactly. It smooths them the way a driver would: rounding sharp junction corners and drifting across lanes gently, but held towards its lane and kept away from the road's edges. Off junctions it stays on its own side of the road.
 - **Sensing:** rays find cars and walls on the road ahead, in the lanes beside and behind it (for changing lanes), right beside it (the blind spot), and along the roads across the next junction. Rays tilt with the car on slopes and stay above the road over crests. It groups a car's hits into one outline, remembers the whole outline of a parked car, and measures how fast each car moves along the road and across it.
+- **People on foot** (0.31): it asks the game which people are nearby too (the rays don't see them) and works out where each is walking. It stops for someone crossing or stepping into the road in front of it, waits until they are past, and goes round someone standing in the road (after as long as it waits behind a stopped car, at about 15 km/h, keeping half a metre more room). People walking along the pavement don't slow it. *City* also slows for a crosswalk with someone by it, to a speed it can stop from (it doesn't wait there: people stand at crosswalks for the lights). In the simulator, on 300 drives with people crossing (at crosswalks and mid-block, stepping off 25-90 m ahead of it), walking along the pavement and standing at the kerb, the people it could have stopped for and hit anyway fell from 119 to 1 (default car), 139 to 5 (Hellhound), 110 to 0 (Maimai) and 151 to 9 (12 m truck). The other hits were people stepping out too close in front of it to stop, or (the truck) walking into its side. Waiting for people cost 5-7% of the time; people on the pavement cost nothing (City: under 1%, for the crosswalks). Switch it off with *Watch for people on foot* in the main window.
 - **Vehicles from the game:** it also asks the game which vehicles are nearby (where each is, how it moves, whether it is parked), so it knows a car's speed the moment it sees it. The rays then only fill in each car's size, and still find everything the game doesn't list.
 - **Routes:** the navigator's (see *Navigation*): the quickest way, ending on the pin's level, at a lane it can reach.
 - **Fits the car:** it measures the car's length and width when it starts, and learns its grip, braking, acceleration and turning as it drives, so a wide, heavy car and a tiny slow one are each driven within what they can do. Grip: a car new to it corners at up to 1 g, building up to the style's grip while bends hold its speed down and it takes them cleanly; where it slides it drops to what the car held there. Sliding means slipping well past what this car's cornering usually needs (it learns that too): the game's cars corner hardest with the body 8–15° into the bend and the tyres squealing, which isn't sliding. It also learns the tightest the car really turns, and slows for bends tighter than that at speed.
@@ -66,13 +78,15 @@ Start it from the main window or with the *Autodrive+: start / stop* hotkey; ste
 
 **Lane changes** for the route (to turn off, or where a lane ends) start about 9 s ahead at any speed (150 m at least), and earlier still with more than one lane to cross.
 
-**Large vehicles:** it measures the car's length with rays from 6 m out, and from 15 m when those find nothing (a truck's body starts further out). (The game's records don't give a vehicle's size: they say 3 × 1 m for cars 5.5 m long.) A vehicle over 7 m long also slows for bends it can't steer round any faster (a long truck turns wide); cars turn far tighter than that, so they don't. In the simulator a 12 m truck arrives in 96% of city drives, but it touches other cars about five times as often as a car does, half of them oncoming cars in tight turns: it doesn't yet swing wide or wait for a gap in oncoming traffic first. (The Hellhound has a milder form of the same problem.)
+**Large vehicles:** it measures the car's length with rays from 6 m out, and from 15 m when those find nothing (a truck's body starts further out). (The game's records don't give a vehicle's size: they say 3 × 1 m for cars 5.5 m long.) A vehicle over 7 m long also slows for bends it can't steer round any faster (a long truck turns wide); cars turn far tighter than that, so they don't. **Wide turns** (0.31): a vehicle over 7 m long knows that in a tight turn its front and rear stick out past the outside of the bend (a 12 m truck turning on 10 m: almost 2 m, over the oncoming lanes in a right turn). It keeps that swing clear of other cars, and before a turn that swings its ends into the oncoming lanes it waits while anything coming the other way would get there while it is in the turn. In the simulator a 12 m truck now touches other cars in 35 and 25 of 400 city drives (0.30: 67 and 61), and oncoming cars in 5 and 3 (0.30: 35 and 31; the ones left are mostly simulated cars that don't brake driving into the truck while it stands waiting). Where the only way past a parked car would touch it, it now stays put instead (3 more drives in 800 didn't arrive). Cars drive exactly as before. (The Hellhound, 5.8 m, is under the limit and still clips junction edges now and then.)
 
-It doesn't stop at traffic lights or watch for pedestrians yet, in any style.
+It doesn't stop at traffic lights yet, in any style.
 
 The debug window's *Vehicle* tab shows the live autodrive params for the car you're in, next to the vanilla autodrive, generic and race params. *Write to log* copies them into `BetterCarAI.log`.
+<!-- ANCHOR_END: autodrive -->
 
 ## Navigation
+<!-- ANCHOR: navigation -->
 The game's GPS goes for the shortest way, and where roads are stacked it can pick the wrong one: a pin under a highway (or a bridge, or a raised road) can get a route up onto it. (Which road the game picks for a pin, and why, isn't confirmed yet: the log's `Route |` lines record where the pin is and where the game put it.) With the native plugin (0.28+) the mod plans its own route over the game's lane map:
 - **For time, not distance:** each road at the pace it is driven (highways faster, junction lanes slower), a few seconds for each junction, more for turning left across traffic, a lot for a U-turn.
 - **Ending at the right place:** it looks at every road within 120 m of the pin and weighs how far each is from the pin, whether it is on the pin's level (a road more than a couple of metres above the pin, or more than 4 m below it, is another level) and how long it takes to get there. Highways count against stopping, unless the pin is on one. A pin without a real height (far above or below every road) counts as on the lowest road right by it, where the street is.
@@ -85,16 +99,20 @@ The game's GPS goes for the shortest way, and where roads are stacked it can pic
 On 1,500 random trips across the dumped city, against the planner of 0.27 (shortest distance to the lane nearest the pin): the simulator's car got there 8-12% sooner, through 15% fewer junctions and a third fewer left turns, and where roads are stacked over the destination none of its routes ended on the wrong level (the old one: about 1 in 5).
 
 The minimap and the world map still draw the game's own route: the GPS is native code. The debug window's *Research* tab has a scan that looks for where the GPS keeps it (set a map pin first), the first step to drawing our route there too.
+<!-- ANCHOR_END: navigation -->
 
 ## Driving test
+<!-- ANCHOR: drivetest -->
 *Debug tools > Driving test* compares your driving with Autodrive+'s on the same route. Put a pin on the map past the bends you want to compare, stop on an ordinary road and press *New test to my map pin* (the game's GPS shows the way). Or press *Random route*: it picks a destination 1-2 km away (or 2-4 km), marks it on the map and shows the route with the yellow line (the minimap's GPS still leads to your own pin, if you have one: follow the yellow line). Drive it; recording starts as you drive off and stops when you arrive. Leaving the route is counted (the drives may then take different roads). Then pick a style and press *Let Autodrive+ drive it*: the car is put back at the start and Autodrive+ drives the same route. Each drive is saved, 20 rows a second (position, heading, velocity, speed, the controls, how far along and off the route, whether the game calls the car skidding), as `test_<id>_player.csv` and `test_<id>_ai_<style>.csv`, with the route in `test_<id>_route.txt`, in the CET mod folder.
 
 `tools/drive_test.py <mod folder>` compares the newest test's drives: the time, average and top speed, the hardest braking and cornering, slip, how long each slid and how much of it was off the route; then the sharpest bends one by one where both drives were on the route (the speed going in, the slowest point, the hardest cornering, the time through, the most slip); then cornering against slip angle, drive by drive. Last, the grip you used without sliding, which is about what the car can really hold. The first tests (0.29, three sports cars) measured about 2 g at 8-15° of slip, falling off past 20°: that is where the styles' cornering grip comes from.
+<!-- ANCHOR_END: drivetest -->
 
 ## How it works / limits
-See [docs/RESEARCH.md](docs/RESEARCH.md). In short, NPC reactions are script logic and are fixed directly. Autodrive steering is native code, so the mod tunes the TweakDB driving parameters it reads. It cannot add new behaviours such as forcing green lights.
+See [docs/RESEARCH.md](docs/RESEARCH.md), or the [documentation site](https://t342guy.github.io/CP2077-BetterCarAI/). In short, NPC reactions are script logic and are fixed directly. Autodrive steering is native code, so the mod tunes the TweakDB driving parameters it reads. It cannot add new behaviours such as forcing green lights.
 
 ## The log
+<!-- ANCHOR: log -->
 The CET log is at `bin/x64/plugins/cyber_engine_tweaks/mods/BetterCarAI/BetterCarAI.log`. What goes in it is set in the debug window's *Recorder & log* tab:
 - `Autodrive+ | ...`: every decision Autodrive+ makes, with seconds into the drive, speed, metres along the route and why: lane changes and swerves (from which lane to which, why, what was in the way, how the move scored), passing (begun, waiting for oncoming traffic, done, given up), what slows it down (following, stopping behind, a junction, going round, losing grip), hard braking, leaving the mapped road, backing up, replanning, the style and settings, and how the drive ended.
 - `Autodrive+ raw: ...`: twice a second, the raw numbers (speeds, what is ahead, the line, steering, pedals, what it has learned about the car).
@@ -104,9 +122,11 @@ The CET log is at `bin/x64/plugins/cyber_engine_tweaks/mods/BetterCarAI/BetterCa
 `tools/drive_log.py BetterCarAI.log` sums each drive up (style, route, how it ended, its decisions counted by reason); `--events` lists every decision, `--traffic` every NPC reaction, `--routes` every route.
 
 Lines starting with `flat not found` mean that a parameter name differs in your game version.
+<!-- ANCHOR_END: log -->
 
 ## Native plugin (RED4ext, optional, in progress)
 
+<!-- ANCHOR: native -->
 `red4ext/` is a RED4ext plugin that gives the mod deeper access to the game's native vehicle AI. The mod works without it. The plugin ships its own script declarations (`BetterCarAINative.reds`), which are compiled in only while it's loaded.
 
 It adds debugging tools to the debug window: the dumps are in the *Lanes & routes* and *Research* tabs, the lane map in *Overlay*.
@@ -119,13 +139,17 @@ It adds debugging tools to the debug window: the dumps are in the *Lanes & route
 - **Scan for the AI's planned path:** has a hotkey too. Run it while AI drive is running. It follows pointers from the car, its AI component, the drive command and the autodrive/traffic systems. It looks for arrays of points along the road ahead and for chains of linked lanes. The goal is to find where the native driver keeps its route.
 
 With the plugin loaded, the mod also **repairs broken junctions** in the game's lane map (on by default, under AI drive). At 11 junctions, all on roads where the game has normal traffic turned off, the turn lanes are attached to the wrong side of the road. Any route through them makes the car swerve one lane sideways and back at the junction mouth, which is what spun AI drive at a T-junction. Those lanes are also missing their links to the road, so the route planner treats the road as a dead end there and routes around it. The plugin reconnects the lanes to the correct side, redraws them as smooth curves, and adds the missing links when the game loads. Only those junction lanes are changed, nothing is saved to disk, and switching the setting off undoes it.
+<!-- ANCHOR_END: native -->
 
-![T-junction lanes before and after the repair](docs/images/tjunction_repair.png)
+![T-junction lanes before and after the repair](docs/src/images/tjunction_repair.png)
 
+<!-- ANCHOR: native2 -->
 AI drive also gets a **route speed planner** (AI drive section, on by default). It reads the route the AI is about to drive from the game's lane map, finds the bends and junction jogs in the next 400 m, and slows down early enough to take each one at the set grip (default 0.8 g). It needs the stability governor on. Unlike trouble spots, it works at junctions the car has never driven.
 
 Output goes to `red4ext/plugins/BetterCarAI/dumps/`.
+<!-- ANCHOR_END: native2 -->
 
+<!-- ANCHOR: build -->
 Build on Linux by cross-compiling with clang-cl and the MSVC runtime/Windows SDK from [xwin](https://github.com/Jake-Shadle/xwin):
 ```
 git submodule update --init
@@ -133,3 +157,5 @@ xwin --accept-license splat --output ~/.local/share/xwin/sdk   # accepts Microso
 ./red4ext/build.sh        # needs clang-cl, lld-link, cmake, ninja (e.g. in a toolbox)
 ./install.sh              # also installs the plugin if red4ext/build/BetterCarAI.dll exists
 ```
+<!-- ANCHOR_END: build -->
+

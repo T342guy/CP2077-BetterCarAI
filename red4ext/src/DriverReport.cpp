@@ -24,6 +24,10 @@ std::vector<DriverSeenPoint> Driver::SeenPoints() const
     std::vector<DriverSeenPoint> out;
     for (size_t i = 0; i < mSeen.size(); ++i)
         out.push_back({mSeen[i].p, mSeen[i].kind, int(i) == mBlockPoint});
+    // (And the people on foot the game listed.)
+    for (size_t k = 0; k < mKnown.size(); ++k)
+        if (mKnown[k].person)
+            out.push_back({KnownAt(mKnown[k]), 2, mBlockKind == 2 && mBlockKnown == int(k)});
     return out;
 }
 
@@ -95,7 +99,7 @@ std::string Driver::Telemetry() const
     if (mBlock >= 0.0f)
     {
         const Seen* o = mBlockPoint >= 0 && mBlockPoint < int(mSeen.size()) ? &mSeen[mBlockPoint] : nullptr;
-        ahead = Format("%s %.1f m (%+.1f sideways", mBlockKind == 0 ? "car" : "wall", mBlock,
+        ahead = Format("%s %.1f m (%+.1f sideways", mBlockKind == 0 ? "car" : mBlockKind == 2 ? "person" : "wall", mBlock,
                        o ? o->l - mShift.At(o->s) : 0.0f);
         if (mBlockMeasured)
             ahead += Format(", moving %.0f km/h along, %+.1f m/s across%s", mBlockU * 3.6f, mBlockW,
@@ -107,12 +111,16 @@ std::string Driver::Telemetry() const
         ahead += Format(" (backing up, %.1f m clear behind)", std::min(mRearClear, 99.0f));
     if (mCautionGap >= 0.0f)
         ahead += Format(" (junction in %.0f m, a car across may go)", mCautionGap);
+    if (mWideGap >= 0.0f)
+        ahead += Format(" (a turn in %.0f m swings it wide, traffic coming)", mWideGap);
     if (mStartHits > 0)
         ahead += Format(" (%d rays started inside something)", mStartHits);
     if (mOffRoad > 0.5f)
         ahead += Format(" (%.0f m driven off the road so far)", mOffRoad);
+    if (mCrosswalkGap >= 0.0f)
+        ahead += Format(" (crosswalk in %.0f m, someone by it)", mCrosswalkGap);
     if (!mKnown.empty())
-        ahead += Format(" (%zu vehicles listed by the game)", mKnown.size());
+        ahead += Format(" (%zu vehicles and people listed by the game)", mKnown.size());
     return Format("v %.1f target %.1f (plan %.1f) ahead %s lead %.1f | heading for %+.1f m (now %+.1f, road "
                   "%+.1f..%+.1f, own side %+.1f..%+.1f%s, line %+.1f from the lane), %zu seen, %zu cars tracked | off %+.2f m, steer %+.2f, turn %+.2f wanted %+.2f, slip %+.2f | "
                   "accel %+.1f wanted %+.1f trim %+.1f | throttle %.2f brake %.2f handbrake %.0f | %.0f of %.0f m, %d replans | "
@@ -137,7 +145,8 @@ std::string Driver::Telemetry() const
 //   left: metres to the destination (-1 cruising); offroad, replans,
 //   moves, dithers: this drive so far; throttle, brake, steer (-1..1);
 //   slip (degrees); grip (g, as learned); oncoming (1 in the oncoming
-//   lanes).
+//   lanes); people: how many on foot are on the road ahead, or stepping
+//   onto it; crosswalk: metres to a crosswalk with someone by it (-1 none).
 std::string Driver::Hud() const
 {
     if (!active || mPath.size() < 2)
@@ -162,7 +171,8 @@ std::string Driver::Hud() const
     else if (mPassing)
         doing = mPassMoving ? "overtaking" : "going round";
     else if (std::fabs(mLast.speed) < 0.5f && mLast.targetSpeed < 0.5f)
-        doing = mCautionGap >= 0.0f ? "waiting at junction" : "waiting";
+        doing = mBlockKind == 2 && mBlock >= 0.0f ? "waiting for someone on foot"
+                : mCautionGap >= 0.0f ? "waiting at junction" : mWideGap >= 0.0f ? "waiting to swing wide" : "waiting";
     else if (mBlock >= 0.0f && mLeadSpeed >= 1.0f && mLast.targetSpeed < mLastPlanSpeed - 1.0f)
         doing = "following";
     else if (mCautionGap >= 0.0f)
@@ -173,7 +183,7 @@ std::string Driver::Hud() const
     float aheadV = 0.0f;
     if (mBlock >= 0.0f)
     {
-        aheadKind = mBlockKind == 1 ? "wall" : mLeadSpeed >= 1.0f ? "car" : "stopped";
+        aheadKind = mBlockKind == 1 ? "wall" : mBlockKind == 2 ? "person" : mLeadSpeed >= 1.0f ? "car" : "stopped";
         aheadV = mLeadSpeed;
         for (const Body& b : mBodies)
             if (mBlockKnown >= 0 && b.known == mBlockKnown && b.parked)
@@ -195,15 +205,18 @@ std::string Driver::Hud() const
             break;
         }
     float road = std::min(mSettings.maxSpeed, std::max(mLimit[Index(mProgress)] * mSettings.laneSpeedFactor, 8.0f));
+    int people = 0;
+    for (const Body& b : mBodies)
+        people += b.kind == 2;
     return Format("active=1;style=%d;v=%.0f;target=%.0f;limit=%.0f;why=%s;doing=%s;lane=%d;tolane=%d;lanes=%d;"
                   "ahead=%.0f;aheadv=%.0f;aheadkind=%s;bend=%.0f;bendv=%.0f;left=%.0f;offroad=%.0f;replans=%d;"
                   "moves=%d;dithers=%d;throttle=%.2f;brake=%.2f;steer=%.2f;slip=%.1f;grip=%.2f;oncoming=%d;"
-                  "junction=%.0f;status=%s",
+                  "junction=%.0f;people=%d;crosswalk=%.0f;status=%s",
                   mSettings.style, v * 3.6f, mLast.targetSpeed * 3.6f, road * 3.6f, mSpeedWhy, doing.c_str(),
                   lane, toLane, n, mBlock, aheadV * 3.6f, aheadKind.c_str(), bend, bendV * 3.6f,
                   mHasGoal ? mS.back() - mProgress : -1.0f, mOffRoad, mReplans, mBigMoves, mDithers, mLast.throttle,
                   mLast.brake, mLast.steer, mLastSlip * 57.3f, LatAccel() / 9.81f, ownSide ? 0 : 1, mCautionGap,
-                  status.c_str());
+                  people, mCrosswalkGap, status.c_str());
 }
 
 // The whole plan, a line per metre: position, lane, room, speed limit and plan.
@@ -216,15 +229,15 @@ std::string Driver::Dump(const std::filesystem::path& aPath) const
 #endif
     if (!f)
         return "could not write " + aPath.string();
-    fprintf(f, "# s x y z lane laneS limit speed lo hi loSame hiSame junction flow crossing lanes... (m, m/s); car "
-               "at s=%.1f\n",
+    fprintf(f, "# s x y z lane laneS limit speed lo hi loSame hiSame junction flow crossing crosswalk swingF swingR "
+               "lanes... (m, m/s); car at s=%.1f\n",
             mProgress);
     for (size_t i = 0; i < mPath.size(); ++i)
     {
         const PathPoint& pt = mPath[i];
-        fprintf(f, "%zu %.2f %.2f %.2f %u %.1f %.1f %.1f %.2f %.2f %.2f %.2f %d %.2f %d", i, pt.p.x, pt.p.y,
-                pt.p.z, pt.lane, pt.laneS, mLimit[i], mSpeed[i], pt.lo, pt.hi, pt.loSame, pt.hiSame,
-                pt.junction ? 1 : 0, pt.flow, pt.crossing ? 1 : 0);
+        fprintf(f, "%zu %.2f %.2f %.2f %u %.1f %.1f %.1f %.2f %.2f %.2f %.2f %d %.2f %d %d %.2f %.2f", i, pt.p.x,
+                pt.p.y, pt.p.z, pt.lane, pt.laneS, mLimit[i], mSpeed[i], pt.lo, pt.hi, pt.loSame, pt.hiSame,
+                pt.junction ? 1 : 0, pt.flow, pt.crossing ? 1 : 0, pt.crosswalk ? 1 : 0, pt.swingF, pt.swingR);
         for (int j = 0; j < pt.laneN; ++j)
             fprintf(f, " %.1f", pt.lanes[j]);
         fprintf(f, "\n");
@@ -278,6 +291,9 @@ std::string Driver::WhatIs(const Way& aWay) const
     std::string what;
     if (aWay.kind == 1)
         what = "a wall";
+    else if (aWay.kind == 2)
+        what = body && std::fabs(body->w) > 0.4f ? Format("someone crossing on foot at %.0f km/h", std::fabs(body->w) * 3.6f)
+                                                 : "someone on foot";
     else if (body && body->parked)
         what = "a parked car";
     else if (!aWay.blockMeasured)
@@ -341,6 +357,7 @@ void Driver::NotePassing(const Situation& c, bool aWasPassing, bool aWasMoving)
             const Body* b = c.homeBody;
             std::string why = !b                  ? std::string("something standing")
                               : b->kind == 1      ? std::string("a wall")
+                              : b->kind == 2      ? Format("someone standing in the road for %.0f s", b->stillFor)
                               : b->parked         ? std::string("a parked car")
                                                   : Format("a car stopped %.0f s in its lane, not queueing", b->stillFor);
             Note("pass: going round %s %.0f m ahead", why.c_str(), c.homeWay.block);
@@ -402,7 +419,8 @@ void Driver::NoteSpeed(float aTarget, bool aNoGrip, float aSlip)
     {
         return w && (!strcmp(w, "following") || !strcmp(w, "stopping behind") || !strcmp(w, "something in the way") ||
                      !strcmp(w, "junction: car across") || !strcmp(w, "going round") || !strcmp(w, "dropping back") ||
-                     !strcmp(w, "losing grip"));
+                     !strcmp(w, "losing grip") || !strcmp(w, "wide turn: oncoming") || !strcmp(w, "person ahead") ||
+                     !strcmp(w, "crosswalk"));
     };
     if (strcmp(mSpeedWhy, mNoted.whyNow))
     {
@@ -419,6 +437,12 @@ void Driver::NoteSpeed(float aTarget, bool aNoGrip, float aSlip)
                 detail = Format("junction %.0f m ahead", mCautionGap);
             else if (!strcmp(w, "going round"))
                 detail = Format("%.0f m to it", mRoundGap);
+            else if (!strcmp(w, "wide turn: oncoming"))
+                detail = Format("turn %.0f m ahead", mWideGap);
+            else if (!strcmp(w, "person ahead"))
+                detail = Format("someone on foot %.0f m ahead", mBlock);
+            else if (!strcmp(w, "crosswalk"))
+                detail = Format("crosswalk %.0f m ahead, someone by it", mCrosswalkGap);
             else if (!strcmp(w, "dropping back"))
                 detail = "behind a car alongside";
             else if (!strcmp(w, "losing grip"))

@@ -171,12 +171,17 @@ struct PathPoint
     float lo = -0.8f, hi = 0.8f, loSame = -0.8f, hiSame = 0.8f;
     bool junction = false;
     bool crossing = false; // in a junction where roads cross (not a merge or a fork)
+    bool crosswalk = false; // a crosswalk crosses the line here
     float flow = 0.0f; // how far the line runs beside the lane (left positive)
     // The middles of the lanes going the same way alongside, from the lane
     // (left positive; its own about 0). The flowed line keeps them: a lane
     // here at +3.5 is driven 3.5 m left of the flowed line.
     float lanes[6] = {};
     int laneN = 0;
+    // A long vehicle's front and rear ends with its centre here, heading
+    // along the line: how far they are off the line (left positive). Out
+    // past a bend's outside by about a^2/2R (Driver::Swing); 0 for a car.
+    float swingF = 0.0f, swingR = 0.0f;
 };
 
 // Something a sensor ray hit: where, and where that is along the path.
@@ -204,11 +209,11 @@ struct Shift
 
 // Something in the way, as a box along the path: a car (its sensor points
 // grouped, grown to at least a car's size while only part of it has been
-// seen) or a single point of a wall.
+// seen), a single point of a wall, or a person (from the game's list).
 struct Body
 {
     float s0, s1, l0, l1;
-    int kind;  // 0 vehicle, 1 wall
+    int kind;  // 0 vehicle, 1 wall, 2 person
     int point; // its nearest sensor point
     int track = -1;
     bool measured = false; // how it moves (along the path, sideways) is known
@@ -229,6 +234,11 @@ struct Known
     float listed = 0.0f; // when last listed
     bool parked = false, bike = false;
     float stillSince = -1.0f; // when it stopped (< 0: moving)
+    // A person on foot; where they were listed a moment ago, and when (their
+    // velocity comes from that: the game gives none).
+    bool person = false;
+    Point3 anchor{};
+    float anchorAt = -1.0f;
 };
 
 // A car followed from frame to frame, for how fast it moves along the path
@@ -302,12 +312,14 @@ struct StyleRules
     bool cautious;
     // Going round something standing: past it at about sqrt(this) m/s.
     float roundBase;
+    // Slowing for a crosswalk ahead with someone by it.
+    bool crosswalkCare;
 };
 
 constexpr StyleRules kStyles[3] = {
-    {"city", 20.0f, true, 0.33f, 0.0f, true, 6.0f, 8.0f, 3.0f, 1.5f, 1, 5.0f, 5.0f, 2.0f, true, 64.0f},
-    {"aggressive", 5.0f, true, 0.0f, 4.0f, true, 3.0f, 5.0f, 2.0f, 1.0f, 3, 4.0f, 7.0f, 3.0f, true, 64.0f},
-    {"madman", 1.5f, false, 0.0f, 2.0f, false, 1.5f, 3.0f, 1.0f, 0.5f, 99, 2.5f, 7.0f, 3.0f, false, 121.0f},
+    {"city", 20.0f, true, 0.33f, 0.0f, true, 6.0f, 8.0f, 3.0f, 1.5f, 1, 5.0f, 5.0f, 2.0f, true, 64.0f, true},
+    {"aggressive", 5.0f, true, 0.0f, 4.0f, true, 3.0f, 5.0f, 2.0f, 1.0f, 3, 4.0f, 7.0f, 3.0f, true, 64.0f, false},
+    {"madman", 1.5f, false, 0.0f, 2.0f, false, 1.5f, 3.0f, 1.0f, 0.5f, 99, 2.5f, 7.0f, 3.0f, false, 121.0f, false},
 };
 
 // How the car moves this frame, as Step measured it.
@@ -374,6 +386,7 @@ struct Noted
     float hardBrakeAt = -10.0f;
     bool offRoad = false, offNoted = false; // off the road now; that noted (after 3 m)
     float offFrom = 0.0f;     // mOffRoad when it went off
+    float crosswalkAt = -100.0f; // the crosswalk last slowed for (along the path)
 };
 
 class Driver
@@ -475,8 +488,11 @@ private:
     bool mNoWay = false; // no sideways move gets past what is ahead
     bool mDoor = false;  // but there is a gap beside it, if the car had more room
     float mRoundGap = -1.0f; // going round something standing this far ahead
+    bool mRoundPerson = false; // that is a person
+    float mCrosswalkGap = -1.0f; // a crosswalk this far ahead with someone by it (crosswalk care)
     float mCautionGap = -1.0f; // a junction this far ahead, with a car across it that may go
     float mDropBack = -1.0f;   // dropping back behind a car alongside, to this speed
+    float mWideGap = -1.0f;    // a long vehicle waiting this far before a turn its ends swing wide in
     bool mReturning = false;   // moving from the oncoming lanes back to its own side
     float mLateral = 0.0f, mWant = 0.0f; // the car's offset from the line; the speed it means to go
     float mSlope = 0.0f;                 // rise per metre the car points (uphill +)
@@ -518,6 +534,7 @@ private:
     void MeasureRoom(const LaneGraph& aGraph);
     void Flow(float aStartLateral);
     void Profile();
+    void Swing();
     bool Project(const Point3& aPos, float aFrom, float aTo, float& aS, float& aLateral) const;
     bool Locate(const Point3& aPos, float& aLateral);
 
@@ -585,6 +602,9 @@ private:
     void CountMoves(const Situation& c);
     void Commit(const Situation& c, const Way& aChosen);
     void WatchJunction(const Situation& c);
+    void WatchWideTurn(const Situation& c);
+    void WatchCrosswalks(const Situation& c);
+    float WideTurnWait(const Situation& c) const;
     void FindDoor(const Situation& c, const Way& aBestWay);
     static int ClearBin(float aTo) { return std::clamp(int(std::lround(aTo * 2.0f)) + 26, 0, 52); }
     void Oncoming(float aRange, float& aGap, float& aSpeed) const;
@@ -609,6 +629,22 @@ private:
     void NoteSettings(const DriverSettings& aSet);
     void NoteSpeed(float aTarget, bool aNoGrip, float aSlip);
     void NoteFrame(const Motion& m, const DriverOutput& aOut, bool aOffRoad);
+
+    // Over 7 m long (a truck, a bus): its ends swing wide in tight turns.
+    bool Long() const { return mFront + mRear > 7.0f; }
+    // How far off the line the body is at aAt with the centre at aCentre,
+    // more than the line there puts it (Swing; 0 for a car), less aSpare
+    // (a margin kept anyway covers that much).
+    float SwingAt(float aCentre, float aAt, float aSpare = 0.0f) const
+    {
+        if (!Long())
+            return 0.0f;
+        const PathPoint& pt = mPath[Index(aCentre)];
+        float a = aAt - aCentre;
+        float sw = a >= 0.0f ? pt.swingF * std::min(a * a / (mFront * mFront), 1.0f)
+                             : pt.swingR * std::min(a * a / (mRear * mRear), 1.0f);
+        return std::copysign(std::max(std::fabs(sw) - aSpare, 0.0f), sw);
+    }
 
     // What this car can do: as learned, never more than the settings allow.
     float LatAccel() const { return std::min(mSettings.latAccel, mCar.grip > 0.0f ? mCar.grip : kStartGrip); }
