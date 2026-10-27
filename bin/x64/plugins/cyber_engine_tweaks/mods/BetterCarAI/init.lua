@@ -538,6 +538,16 @@ local function startOwnDriver()
   -- The car's own size first (the road room it plans with depends on it).
   local body = sys:OwnDriverBody()
   pcall(function() Game.BCAI_DriverBody(body) end)
+  -- Steering geometry from the records: wheelbase (from the measured body),
+  -- steering lock and mass. The plugin uses it as the ceiling on the learned
+  -- full-lock turn, so a long truck cannot "learn" a tighter turn than its
+  -- wheels allow.
+  local car = carData()
+  if car and (car.wheelTurn or 0) > 0 then
+    local wheelbase = 0.9 * (body.x + body.y)
+    local mass = car.mass or car.recordMass or 0
+    pcall(function() Game.BCAI_DriverProfile(vehicle, Vector4.new(wheelbase, car.wheelTurn, mass, 0)) end)
+  end
   local ok, result = pcall(function()
     return Game.BCAI_DriverStart(autodriveSystem(), vehicle:GetWorldPosition(), vehicle:GetWorldForward(), goal, goal.w > 0.5)
   end)
@@ -561,7 +571,6 @@ local function startOwnDriver()
   state.ownVehicleTimer = 0
   state.ownVehiclesFailed = false
   if settings.ownGameHud then sys:ShowOwnDriverHud(true, goal.w < 0.5) end
-  local car = carData()
   if car then log("Autodrive+: the car's records: " .. car.summary .. " (" .. car.raw .. ")") end
   sys:ShowMessage(msg)
 end

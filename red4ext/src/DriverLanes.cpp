@@ -672,15 +672,17 @@ float Driver::WideTurnWait(const Situation& c) const
     // (Already in it: carry on through.)
     if (c0 < 0.0f || c0 < mProgress + 1.0f)
         return -1.0f;
-    // When it would be in it: the speed through it as planned (from a
-    // standstill when it waits right before it), and a margin.
-    float v = std::max(c.v, 0.0f), through = 1e9f;
+    // When it would be in it. Do not use the plan's optimistic speed: a
+    // loaded truck enters slowly and takes longer in the sweep than the
+    // speed plan says (the 0.31 wait released with an oncoming car 22 m
+    // away and then had to make an emergency move).
+    float v = std::max(c.v, 0.0f), planned = 1e9f;
     for (float s = c0; s <= c1; s += 2.0f)
-        through = std::min(through, SpeedAt(s));
-    through = std::max(through, 2.0f);
+        planned = std::min(planned, SpeedAt(s));
+    float through = std::clamp(planned, 2.0f, std::max(v, 2.0f) + 1.5f);
     float t0 = (c0 - mProgress) / std::max({v, through, 3.0f});
-    float t1 = t0 + (c1 - c0 + mFront + mRear) / through + (v < 1.0f ? through / 1.5f : 0.0f);
-    float margin = c.rules->cautious ? 2.5f : 1.2f;
+    float t1 = t0 + (c1 - c0 + mFront + mRear) / through + (v < 1.0f ? through / 1.5f + 1.0f : 0.0f);
+    float margin = c.rules->cautious ? 3.0f : 2.0f;
     // Each vehicle coming the other way (listed, or seen by the rays): when
     // it is in the stretch the ends sweep.
     auto clash = [&](float s0, float s1, float l0, float l1, float u)

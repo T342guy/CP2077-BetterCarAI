@@ -1126,6 +1126,8 @@ The semi also still cut/ran wide in junctions. The steering inverse used the lea
 
 <!-- ANCHOR: v0312 -->
 
+**The debug rays when Autodrive+ is off.** The overlay took the measured body from `BCAIOwnDriver`; when Autodrive+ was switched off that object was gone and the fan fell back to 3 m from the centre, inside the truck. The body measurement is now a static `BCAIVehicleBody` helper used by both Autodrive+ and the overlay; when Autodrive+ is off the overlay measures the current car itself (once per car, refreshed every 2 s).
+
 **The red plan line.** It was not a grip estimate: `BCAIDebug` coloured each plan segment by `planned speed / current speed` (red below 45%). The speed plan floors at 3 m/s (10.8 km/h), so any junction bend the planner thought the car could not take painted its whole approach red and the car crawled there. The reference is now the plan’s speed at the first point, or the car’s speed if it is already faster, so a normal slowdown no longer colours the approach red.
 
 **Learning the real steering response.** The steering fit only accepted samples below **2.9° of slip and 0.6 g** (`|slip| < 0.05`, `|yaw·v| < 6`). That excludes the 5-17° / up to 2 g cornering the driving tests called gripping, so a heavy vehicle never learned its real response: the fit stayed at the gentle-corner value, `Reach`/the speed plan stayed conservative, and the plan floored at 10.8 km/h. The fit now learns at up to **17° slip and 2.4 g**, with samples weighted down toward the slip limit, while the pedals still learn only in a straight line and true slides (`mSlideTime`) are still excluded. `turnSeen` and `slipStiff` use the same 17° envelope.
@@ -1137,3 +1139,44 @@ The semi also still cut/ran wide in junctions. The steering inverse used the lea
 **Untested in game (0.31.2):** the wider learning envelope and kink guard on the Behemoth/cement truck; whether the plan gradient now reads sensibly in the overlay.
 
 <!-- ANCHOR_END: v0312 -->
+
+## Junction-width lines and path-curvature learning (plugin 0.32)
+
+<!-- ANCHOR: v032 -->
+
+**The junction line.** The fixed `±1.5 m from the lane centre` clamp in `Flow()` was keeping long vehicles on a line too tight for their bodies, so `Profile()` fell to the 3 m/s floor and the truck still ran wide. For a long vehicle (`Long()`), the line now uses the measured **full junction room** (still margin-inset), allowing a wide entry and late apex; cars keep their old own-side line and the fixed clamp, so their behaviour is unchanged. The truck's body swing is still checked by `Swing`/`Clearance`, and `WideTurnWait` is the gate for oncoming traffic.
+
+**Path curvature, not body yaw.** The steering fit and `turnSeen` now use the **velocity direction** (`mPathYawRate`) rather than body yaw. At 5–17° slip the body yaw overstates how tightly the car is really turning; that made `Reach` grow to 0.18 on the Bratsk while its actual path curvature was about 0.12. `turnSeen` now rises over about a second and **falls** over about five, so a high-slip transient cannot leave the speed plan permanently too optimistic.
+
+**Wide-turn wait.** It no longer uses the optimistic plan speed for the truck's time in the swept stretch. It uses the current speed and at most current + 1.5 m/s, with a larger cautious margin, so it does not release just before an oncoming car arrives.
+
+**Simulator.** 9.5 m, 10 m/s², slow-wheel test truck:
+- D1: 13 m → 3 m off the road, max off line 2.14 → 1.53 m, steering movement 0.191 → 0.157/s.
+- D2: 19 m → 5 m off the road, max off line 2.76 → 2.13 m, steering movement 0.189 → 0.171/s.
+- 40 city scenes: 231 m off the road (0.31.2: 397 m), 11 scenes with contact (10), 5 not arrived (6).
+
+**Not done in 0.32 (larger changes):** a proper junction trajectory solver (Bézier/clothoid with vehicle minimum radius), vehicle-profile data (wheelbase, steering lock, mass, friction) from the records, steering preview/feed-forward for the actual steering lag, a dynamic line that only uses the oncoming side when it is clear, and traffic-light/gap-acceptance logic. The 0.32 line is static: it uses the full junction room and `WideTurnWait` decides whether to start.
+
+<!-- ANCHOR_END: v032 -->
+
+## Vehicle steering profile, junction width and overlay truth (plugin 0.33)
+
+<!-- ANCHOR: v033 -->
+
+**Constrained minimum-curvature junction solver.** `SolveJunctions()` no longer relies on the old lane-line smoothing in a junction. For every junction span it makes a small projected-gradient solve over the path's lateral offsets: the lane line is the reference, the measured room is the bound, the first and last few points are anchors, and the objective is curvature squared plus a curvature-change (smoothness) term. It runs for cars and long vehicles. A long vehicle may use the whole junction room; a car stays on its own side with a small edge margin, because cutting the apex into crossing traffic is worse than a slightly tighter bend. The solved line feeds the speed plan, swing check, clearance and overlay.
+
+**Junction width for long vehicles.** `Flow()` still gives a `Long()` vehicle the measured full junction room instead of the old ±1.5 m lane-centre clamp, and the solver can use it. Cars keep their own-side line. The body swing is still checked by `Swing`/`Clearance`, and `WideTurnWait` remains the oncoming-traffic gate.
+
+**Steering geometry from the records.** `BCAI_DriverProfile(vehicle, profile)` takes the body-derived wheelbase, the record's `MaxWheelTurnDeg` and mass. The plugin computes the tightest curvature the wheel can physically make, `tan(lock)/wheelbase`, and uses it as a ceiling on `Reach`. `turnSeen` can no longer learn a tighter turn than the wheel geometry allows. The profile is reset when the car changes, but kept across restarts of the same car.
+
+**Path curvature, not body yaw.** The steering fit, `turnSeen`, grip/slip detection and `slipStiff` now use `mPathYawRate` from the velocity direction. At 5-17° slip, body yaw overstates the turn. `turnSeen` rises over about a second and falls over about five, so a transient cannot leave `Reach` permanently wrong.
+
+**Wide-turn wait.** Uses the current speed and at most current + 1.5 m/s for the truck's time in the swept stretch, with a 2 s / 3 s margin. It no longer trusts the plan speed.
+
+**Overlay.** The debug ray fan now measures the current vehicle itself when Autodrive+ is off (`BCAIVehicleBody`), so it no longer falls back to 3 m inside a truck. The panel shows `Reach`, the geometry maximum and full-lock radius, actual path turn rate and path curvature, the wide-turn wait distance, and the junction solver's peak curvature before and after. The raw log shows `reach (max ...)`, wheelbase, steering lock, solved junction spans and the curvature change.
+
+**Simulator.** 9.5 m slow-wheel truck: D1 peak junction curvature 0.232 → 0.171 /m, off-road 2 m, 50 km/h average; D2 0.657 → 0.238 /m, off-road 5 m, 50 km/h average. 40 big-truck city scenes: 176 m off road (before the solver: 231), 10 contact scenes (11), 6 not arrived (5), 38 km/h average, 2.60 changes of mind per drive (3.27). Normal-car traffic: 4 contact scenes, 49 km/h average, 0 m off road, 0.57 changes of mind per drive (0.75).
+
+**Still larger than this release:** an analytic clothoid/Bézier construction (0.33 solves the constrained curvature problem numerically), a dynamic line that moves into the oncoming side only while it is clear (0.33 is the static corridor plus `WideTurnWait`), steering preview/feed-forward for the actuator lag, and traffic-light/gap-acceptance logic. Traffic lights need the game's own light state; the plugin does not read it yet.
+
+<!-- ANCHOR_END: v033 -->

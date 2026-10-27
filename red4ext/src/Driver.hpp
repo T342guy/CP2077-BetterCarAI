@@ -127,7 +127,14 @@ struct CarResponse
     // fit, learned with the wheel turned a little, says far less for the
     // game's cars (they turned on 4 m across junctions; the fit said 7 m).
     float turnSeen = 0.0f;
-    float Reach() const { return std::max(steer.k, turnSeen); }
+    // The tightest turn the wheel geometry allows, from the record's steering
+    // lock and the vehicle's wheelbase. 0 until the profile is set.
+    float turnMax = 0.0f;
+    float Reach() const
+    {
+        float r = std::max(steer.k, turnSeen);
+        return turnMax > 0.0f ? std::min(r, turnMax) : r;
+    }
 
     CarResponse() { Reset(0); }
 
@@ -139,6 +146,7 @@ struct CarResponse
         grip = 0.0f;
         slipStiff = 86.0f;
         turnSeen = 0.0f;
+        turnMax = 0.0f;
         slidAt = 0.0f;
         for (int i = 0; i < kBuckets; ++i)
         {
@@ -413,6 +421,7 @@ public:
     std::vector<DriverRay> Rays(float aFront);
     size_t Sense(const std::vector<Point3>& aEnds, const std::vector<bool>& aHit);
     void SetBody(float aFront, float aRear, float aHalfWidth, float aSensorHeight = 0.7f);
+    void SetProfile(uintptr_t aCar, float aWheelbase, float aWheelTurnDeg, float aMass);
     size_t SetVehicles(const std::vector<DriverVehicle>& aList);
 
     // DriverReport.cpp
@@ -447,6 +456,9 @@ private:
     float mSensorHeight = 0.7f;         // the forward/rear rays' height above its origin
     std::vector<Known> mKnown;
     float mHeading = 0.0f, mYawRate = 0.0f, mSteer = 0.0f, mLastV = 0.0f, mAccel = 0.0f;
+    float mVelHeading = 0.0f, mPathYawRate = 0.0f; // from the velocity direction, not the body
+    bool mHaveVelHeading = false;
+    float mWheelbase = 0.0f, mWheelTurnDeg = 0.0f, mMass = 0.0f; // from the car's records
     float mSteerFelt = 0.0f, mThrottleFelt = 0.0f, mBrakeFelt = 0.0f;
     float mCurvTrim = 0.0f, mAccelWant = 0.0f, mAccelLagged = 0.0f, mAccelTrim = 0.0f, mGripSpeed = 100.0f;
     float mSlideTime = 0.0f; // how long it has been sliding (s)
@@ -484,6 +496,9 @@ private:
     float mLeadSpeed = 0.0f, mStuck = 0.0f, mLastLateral = 0.0f;
     float mLeadGap = -1.0f; // the gap mLeadSpeed was last measured at
     float mProfileLat = 0.0f, mProfileDecel = 0.0f, mProfileTurn = 0.0f; // the limits the speed plan was made with
+    // What the junction solver did, for the log and overlay.
+    int mJunctionsSolved = 0;
+    float mJunctionBefore = 0.0f, mJunctionAfter = 0.0f; // peak |curvature| (1/m), before and after
     int mStartHits = 0;     // rays that hit something where they start
     float mOffRoad = 0.0f;  // metres driven off the mapped road
     float mLastTo = 0.0f;   // the last move 2 m or more sideways, and how many
@@ -541,6 +556,10 @@ private:
     Point3 NormalAt(size_t i) const;
     void MeasureRoom(const LaneGraph& aGraph);
     void Flow(float aStartLateral);
+    // A constrained minimum-curvature line through every junction: the
+    // lane's entry/exit are anchors, the measured room the limits, and the
+    // line bends as little as it can. For cars and long vehicles alike.
+    void SolveJunctions();
     void Profile();
     void Swing();
     bool Project(const Point3& aPos, float aFrom, float aTo, float& aS, float& aLateral) const;

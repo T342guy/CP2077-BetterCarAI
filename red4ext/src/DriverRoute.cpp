@@ -127,6 +127,7 @@ void Driver::Build(const LaneGraph& aGraph, const std::vector<Leg>& aLegs, const
         MeasureRoom(aGraph);
         Point3 n = NormalAt(0);
         Flow((aPos.x - mPath[0].p.x) * n.x + (aPos.y - mPath[0].p.y) * n.y);
+        SolveJunctions();
     }
     mS.resize(mPath.size());
     for (size_t i = 0; i < mPath.size(); ++i)
@@ -337,7 +338,17 @@ void Driver::Flow(float aStartLateral)
         // than 1.5 m off the lane either.)
         lo[i] = std::min(pt.loSame + kMargin, 0.0f);
         hi[i] = std::max(pt.hiSame - kMargin, 0.0f);
-        if (pt.junction)
+        // A long vehicle needs the whole junction to make a wide entry and
+        // late apex; its body swing is checked by Swing/Clearance and the
+        // wide-turn wait keeps oncoming traffic out of the swept stretch.
+        // Cars use their own side of the junction (the old fixed 1.5 m clamp
+        // kept even a car from using the lane room it had).
+        if (pt.junction && Long())
+        {
+            lo[i] = std::min(pt.lo + kMargin, 0.0f);
+            hi[i] = std::max(pt.hi - kMargin, 0.0f);
+        }
+        else if (pt.junction)
         {
             lo[i] = std::max(lo[i], -1.5f);
             hi[i] = std::min(hi[i], 1.5f);
@@ -408,6 +419,288 @@ void Driver::Flow(float aStartLateral)
         mPath = std::move(path);
         mLimit = std::move(limit);
     }
+}
+
+// A constrained minimum-curvature line through a junction. The lane line
+// is the reference; each point may move sideways within the measured room.
+// The first and last few points are anchors, so the solved curve meets the
+// lane line outside the junction. Curvature is the Menger curvature of three
+// consecutive points; the solver lowers the sum of its square with a
+// projected gradient (the bounds are the road, the anchors are the ends).
+// This is not the old lane-line smoothing: there is no pull to the lane
+// inside the junction, and the objective is curvature itself.
+void Driver::SolveJunctions()
+{
+    const size_t n = mPath.size();
+    mJunctionsSolved = 0;
+    mJunctionBefore = mJunctionAfter = 0.0f;
+    if (n < 10)
+        return;
+
+    auto curvature = [](const Point3& a, const Point3& b, const Point3& c)
+    {
+        float ux = b.x - a.x, uy = b.y - a.y;
+        float vx = c.x - b.x, vy = c.y - b.y;
+        float wx = c.x - a.x, wy = c.y - a.y;
+        float cross = ux * vy - uy * vx;
+        float den = std::sqrt(ux * ux + uy * uy) * std::sqrt(vx * vx + vy * vy) *
+                    std::sqrt(wx * wx + wy * wy);
+        return den > 1e-6f ? 2.0f * cross / den : 0.0f;
+    };
+
+    std::vector<float> baseK(n, 0.0f);
+    for (size_t i = 1; i + 1 < n; ++i)
+        baseK[i] = std::fabs(curvature(mPath[i - 1].p, mPath[i].p, mPath[i + 1].p));
+
+    struct Span
+    {
+        size_t a, b;
+    };
+    std::vector<Span> spans;
+    for (size_t i = 0; i < n;)
+    {
+        if (!mPath[i].junction)
+        {
+            ++i;
+            continue;
+        }
+        size_t a = i;
+        while (i < n && mPath[i].junction)
+            ++i;
+        size_t b = i - 1;
+        // A metre or two of a lane that is not flagged as a crossing does
+        // not make a new junction.
+        if (!spans.empty() && a <= spans.back().b + 4)
+            spans.back().b = b;
+        else
+            spans.push_back({a, b});
+    }
+    if (spans.empty())
+        return;
+
+    for (const Span& span : spans)
+        for (size_t i = span.a; i <= span.b; ++i)
+            mJunctionBefore = std::max(mJunctionBefore, baseK[i]);
+    if (mJunctionBefore < 0.02f) // wider than a 50 m radius: nothing to solve
+        return;
+
+    // The part of a junction worth solving is where it actually bends. A
+    // long junction made of straight lanes gets no work. The window has to
+    // be long enough to let a tight turn open out into a wider arc: a bend
+    // uses many metres either side, not just the few points at its apex.
+    const bool longVehicle = Long();
+    const float padM = longVehicle ? std::clamp(1.6f * (mFront + mRear), 12.0f, 26.0f)
+                                   : std::clamp(2.0f * (mFront + mRear), 8.0f, 16.0f);
+    const size_t pad = size_t(std::lround(padM));
+    struct Win
+    {
+        size_t a, b;
+    };
+    std::vector<Win> windows;
+    auto addWindow = [&](size_t a, size_t b)
+    {
+        a = std::min(a, n - 1);
+        b = std::min(b, n - 1);
+        if (b < a)
+            return;
+        if (!windows.empty() && a <= windows.back().b + 2)
+            windows.back().b = std::max(windows.back().b, b);
+        else
+            windows.push_back({a, b});
+    };
+    for (const Span& span : spans)
+    {
+        float peak = 0.0f;
+        for (size_t i = span.a; i <= span.b; ++i)
+            peak = std::max(peak, baseK[i]);
+        if (peak < 0.02f)
+            continue;
+        // For a normal junction, solve the whole crossing: the curve can
+        // spread its turn into the straight lanes either side. Very long
+        // junction stretches (a whole crossing of a wide road, or several
+        // joined) are solved only around their actual bends.
+        if (span.b - span.a <= 120)
+        {
+            addWindow(span.a > pad ? span.a - pad : 0, span.b + pad);
+            continue;
+        }
+        const float threshold = std::max(0.015f, 0.30f * peak);
+        size_t run = n; // none
+        auto addRun = [&](size_t end)
+        {
+            if (run == n)
+                return;
+            size_t a = run > pad ? run - pad : 0;
+            size_t b = std::min(n - 1, end + pad);
+            addWindow(a, b);
+            run = n;
+        };
+        for (size_t i = span.a; i <= span.b; ++i)
+        {
+            if (baseK[i] >= threshold)
+            {
+                if (run == n)
+                    run = i;
+            }
+            else
+                addRun(i > 0 ? i - 1 : i);
+        }
+        addRun(span.b);
+    }
+    if (windows.empty())
+        return;
+    // A truck may use the whole junction; a car stays close to its own
+    // lane line (it does not need the oncoming side, and cutting the apex
+    // into crossing traffic is worse than a slightly tighter bend).
+    const float kReg = longVehicle ? 0.0005f : 0.008f;
+    const float kSmooth = longVehicle ? 0.6f : 1.2f;
+    const float margin = longVehicle ? 0.0f : 0.25f;
+    const float kH = 0.02f;
+    for (const Win& win : windows)
+    {
+        const size_t m = win.b - win.a + 1;
+        if (m < 8)
+            continue;
+        std::vector<Point3> c(m), nr(m), p(m);
+        std::vector<float> lo(m), hi(m), o(m, 0.0f);
+        for (size_t j = 0; j < m; ++j)
+        {
+            size_t i = win.a + j;
+            const PathPoint& pt = mPath[i];
+            c[j] = pt.p;
+            nr[j] = NormalAt(i);
+            float l = longVehicle ? pt.lo : std::max(pt.lo, pt.loSame);
+            float h = longVehicle ? pt.hi : std::min(pt.hi, pt.hiSame);
+            l = l < -margin ? l + margin : 0.0f;
+            h = h > margin ? h - margin : 0.0f;
+            lo[j] = std::min(l, 0.0f);
+            hi[j] = std::max(h, 0.0f);
+            p[j] = pt.p;
+        }
+        // The ends stay on the line outside the junction, and so do the
+        // first and last points if the junction is at the path ends.
+        const size_t pin = 3;
+        for (size_t j = 0; j < m; ++j)
+            if (j < pin || j + pin >= m)
+                lo[j] = hi[j] = 0.0f;
+
+        auto point = [&](size_t gi)
+        {
+            if (gi >= win.a && gi <= win.b)
+                return p[gi - win.a];
+            return gi < n ? mPath[gi].p : mPath[n - 1].p;
+        };
+        auto kAt = [&](size_t gi)
+        {
+            return curvature(point(gi - 1), point(gi), point(gi + 1));
+        };
+        auto bendCost = [&](size_t q)
+        {
+            float k = kAt(q), f = k * k;
+            if (q + 1 <= n - 2)
+            {
+                float d = kAt(q + 1) - k;
+                f += kSmooth * d * d;
+            }
+            return f;
+        };
+        auto local = [&](size_t j)
+        {
+            size_t gi = win.a + j;
+            float f = kReg * o[j] * o[j];
+            for (size_t q = (gi > 3 ? gi - 3 : 1); q <= std::min(gi + 3, n - 2); ++q)
+                f += bendCost(q);
+            return f;
+        };
+        auto full = [&]()
+        {
+            float f = 0.0f;
+            for (size_t j = 0; j < m; ++j)
+                f += kReg * o[j] * o[j];
+            for (size_t q = (win.a > 3 ? win.a - 3 : 1); q <= std::min(win.b + 3, n - 2); ++q)
+                f += bendCost(q);
+            return f;
+        };
+
+        float f = full();
+        float step = 0.5f;
+        for (int it = 0; it < 90; ++it)
+        {
+            std::vector<float> g(m, 0.0f);
+            float gn = 0.0f;
+            for (size_t j = 0; j < m; ++j)
+            {
+                if (lo[j] == hi[j])
+                    continue;
+                float old = o[j];
+                float up = std::min(hi[j], old + kH), down = std::max(lo[j], old - kH);
+                p[j] = {c[j].x + nr[j].x * up, c[j].y + nr[j].y * up, c[j].z};
+                float fp = local(j);
+                p[j] = {c[j].x + nr[j].x * down, c[j].y + nr[j].y * down, c[j].z};
+                float fm = local(j);
+                p[j] = {c[j].x + nr[j].x * old, c[j].y + nr[j].y * old, c[j].z};
+                g[j] = (fp - fm) / std::max(up - down, 1e-4f);
+                gn += g[j] * g[j];
+            }
+            if (gn < 1e-10f)
+            {
+                break;
+            }
+            gn = std::sqrt(gn);
+
+            const std::vector<float> baseO = o;
+            std::vector<float> bestO = o;
+            float bestF = f, bestStep = 0.0f;
+            for (int ls = 0; ls < 12; ++ls)
+            {
+                float st = step * std::pow(0.5f, float(ls));
+                for (size_t j = 0; j < m; ++j)
+                {
+                    o[j] = std::clamp(baseO[j] - st * g[j] / gn, lo[j], hi[j]);
+                    p[j] = {c[j].x + nr[j].x * o[j], c[j].y + nr[j].y * o[j], c[j].z};
+                }
+                float nf = full();
+                if (nf < bestF - 1e-10f)
+                {
+                    bestF = nf;
+                    bestStep = st;
+                    bestO = o;
+                }
+            }
+            if (bestStep == 0.0f)
+            {
+                break;
+            }
+            o = bestO;
+            for (size_t j = 0; j < m; ++j)
+                p[j] = {c[j].x + nr[j].x * o[j], c[j].y + nr[j].y * o[j], c[j].z};
+            f = bestF;
+            step = std::min(1.0f, bestStep * 1.4f);
+        }
+
+        bool moved = false;
+        for (size_t j = 0; j < m; ++j)
+        {
+            if (std::fabs(o[j]) < 1e-3f)
+                continue;
+            moved = true;
+            size_t i = win.a + j;
+            mPath[i].p.x = c[j].x + nr[j].x * o[j];
+            mPath[i].p.y = c[j].y + nr[j].y * o[j];
+            // The room moves with the line, and `flow` is where the line
+            // ended up beside the lane (for the log).
+            mPath[i].flow += o[j];
+            mPath[i].lo -= o[j];
+            mPath[i].hi -= o[j];
+            mPath[i].loSame -= o[j];
+            mPath[i].hiSame -= o[j];
+        }
+        if (moved)
+            ++mJunctionsSolved;
+    }
+    for (size_t i = 1; i + 1 < n; ++i)
+        if (mPath[i].junction)
+            mJunctionAfter = std::max(mJunctionAfter, std::fabs(curvature(mPath[i - 1].p, mPath[i].p, mPath[i + 1].p)));
 }
 
 // A long vehicle's ends as its centre follows the line: on the line's

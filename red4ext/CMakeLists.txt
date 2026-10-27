@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(BetterCarAI LANGUAGES CXX VERSION 0.31.2)
+project(BetterCarAI LANGUAGES CXX VERSION 0.33.0)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

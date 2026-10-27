@@ -16,3 +16,5 @@ From plugin 0.14 the mod drives the car itself. Each version's notes say what ch
 - [0.31](v031.md): people on foot, and long vehicles at tight turns.
 - [0.31.1](v0311.md): large-vehicle body/ray measurement, steering anticipation and grip.
 - [0.31.2](v0312.md): learn the 5-17° / 2 g cornering response, kink guard, plan gradient.
+- [0.32](v032.md): junction-width lines for long vehicles, path-curvature learning, wide-turn timing.
+- [0.33](v033.md): steering geometry from the records, constrained minimum-curvature junction solver for all vehicles, path-curvature learning, overlay truth.

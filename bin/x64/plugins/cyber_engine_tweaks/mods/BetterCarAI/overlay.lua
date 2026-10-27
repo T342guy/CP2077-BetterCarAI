@@ -259,6 +259,24 @@ function Overlay.DrawPanel(ctx)
         hud.offroad or 0, hud.replans or 0, hud.moves or 0, hud.dithers or 0))
       ImGui.Text(string.format("Grip it corners at %.2f g (a new car starts at 1 g and builds up to the style's in clean bends; less where it slid), slip angle %.1f deg",
         hud.grip or 0, hud.slip or 0))
+      if hud.reach then
+        if (hud.turnmax or 0) > 0 then
+          ImGui.Text(string.format("Steering reach %.2f (geometry max %.2f, %.1f m full lock), path turn %.0f deg/s, curvature %.3f /m",
+            hud.reach, hud.turnmax, hud.turnradius or 0, hud.pathturn or 0, hud.pathcurv or 0))
+        else
+          ImGui.Text(string.format("Steering reach %.2f (no steering profile), path turn %.0f deg/s, curvature %.3f /m",
+            hud.reach, hud.pathturn or 0, hud.pathcurv or 0))
+        end
+      end
+      if (hud.wide or -1) >= 0 then
+        ImGui.TextColored(1, 0.85, 0.4, 1, string.format("Wide-turn wait: a turn %.0f m ahead, oncoming traffic", hud.wide))
+      end
+      if (hud.jsolve or 0) > 0 then
+        local b, a = hud.jbefore or 0, hud.jafter or 0
+        ImGui.TextColored(0.55, 0.85, 1, 1, string.format(
+          "Junction solver: %d solved, peak curvature %.3f -> %.3f /m (radius %.1f -> %.1f m)",
+          hud.jsolve, b, a, b > 0 and 1 / b or 0, a > 0 and 1 / a or 0))
+      end
       colouredText(GREY, "Status: " .. tostring(hud.status or ""))
     end
     if ctx.car and ctx.car.summary ~= "" then

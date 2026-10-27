@@ -347,6 +347,9 @@ size_t DriverSense(const std::vector<Point3>& aEnds, const std::vector<bool>& aH
 // rear are from its centre, half its width, and the height the forward rays
 // should start at above its origin (m).
 void DriverBody(float aFront, float aRear, float aHalfWidth, float aSensorHeight = 0.7f);
+// The car's steering geometry from its records: wheelbase, steering lock in
+// degrees, and mass. Used to keep Reach from exceeding what the wheel can do.
+void DriverProfile(uintptr_t aCar, float aWheelbase, float aWheelTurnDeg, float aMass);
 // Vehicles near the car as the game lists them (not just what the rays saw):
 // where each is, which way it points and how it moves. Their size is learned
 // from the rays that hit them. People on foot come in the same list (the

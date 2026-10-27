@@ -124,15 +124,17 @@ std::string Driver::Telemetry() const
     return Format("v %.1f target %.1f (plan %.1f) ahead %s lead %.1f | heading for %+.1f m (now %+.1f, road "
                   "%+.1f..%+.1f, own side %+.1f..%+.1f%s, line %+.1f from the lane), %zu seen, %zu cars tracked | off %+.2f m, steer %+.2f, turn %+.2f wanted %+.2f, slip %+.2f | "
                   "accel %+.1f wanted %+.1f trim %+.1f | throttle %.2f brake %.2f handbrake %.0f | %.0f of %.0f m, %d replans | "
-                  "learned: curvature %.2f*steer^%.1f reach %.2f, brake %.1f*brake^%.2f m/s2, full throttle %.1f, coasting "
-                  "%+.1f m/s2, grip %.1f m/s2 | body %.1f/%.1f m, %.2f m wide",
+                  "learned: curvature %.2f*steer^%.1f reach %.2f (max %.2f), brake %.1f*brake^%.2f m/s2, full throttle %.1f, coasting "
+                  "%+.1f m/s2, grip %.1f m/s2 | body %.1f/%.1f m, %.2f m wide, wheelbase %.1f m, lock %.0f deg | "
+                  "junction solver %d spans, peak curvature %.3f -> %.3f /m",
                   v * 3.6f, mLast.targetSpeed * 3.6f, mLastPlanSpeed * 3.6f, ahead.c_str(), mLeadSpeed * 3.6f,
                   mShift.to, mShift.At(mProgress), pt.lo, pt.hi, pt.loSame, pt.hiSame, pt.junction ? ", junction" : "", pt.flow, mSeen.size(), mTracks.size(),
                   mLast.lateralError, mLast.steer, mYawRate, mLastWantRate, mLastSlip, mAccel, mAccelWant,
                   mAccelTrim, mLast.throttle, mLast.brake, mLast.handbrake, mProgress,
-                  mPath.empty() ? 0.0f : mS.back(), mReplans, mCar.steer.k, mCar.steer.p, mCar.Reach(), mCar.brake.k, mCar.brake.p,
-                  CarResponse::Lookup(mCar.full, v), CarResponse::Lookup(mCar.coast, v), LatAccel(), mFront,
-                  mRear, 2.0f * mHalfWidth);
+                  mPath.empty() ? 0.0f : mS.back(), mReplans, mCar.steer.k, mCar.steer.p, mCar.Reach(), mCar.turnMax,
+                  mCar.brake.k, mCar.brake.p, CarResponse::Lookup(mCar.full, v), CarResponse::Lookup(mCar.coast, v),
+                  LatAccel(), mFront, mRear, 2.0f * mHalfWidth, mWheelbase, mWheelTurnDeg,
+                  mJunctionsSolved, mJunctionBefore, mJunctionAfter);
 }
 
 // What it is doing, for the overlay: "key=value" pairs separated by ';'.
@@ -211,12 +213,15 @@ std::string Driver::Hud() const
     return Format("active=1;style=%d;v=%.0f;target=%.0f;limit=%.0f;why=%s;doing=%s;lane=%d;tolane=%d;lanes=%d;"
                   "ahead=%.0f;aheadv=%.0f;aheadkind=%s;bend=%.0f;bendv=%.0f;left=%.0f;offroad=%.0f;replans=%d;"
                   "moves=%d;dithers=%d;throttle=%.2f;brake=%.2f;steer=%.2f;slip=%.1f;grip=%.2f;oncoming=%d;"
-                  "junction=%.0f;people=%d;crosswalk=%.0f;status=%s",
+                  "junction=%.0f;people=%d;crosswalk=%.0f;reach=%.2f;turnmax=%.2f;turnradius=%.1f;pathturn=%.0f;"
+                  "pathcurv=%.3f;wide=%.0f;jsolve=%d;jbefore=%.3f;jafter=%.3f;status=%s",
                   mSettings.style, v * 3.6f, mLast.targetSpeed * 3.6f, road * 3.6f, mSpeedWhy, doing.c_str(),
                   lane, toLane, n, mBlock, aheadV * 3.6f, aheadKind.c_str(), bend, bendV * 3.6f,
                   mHasGoal ? mS.back() - mProgress : -1.0f, mOffRoad, mReplans, mBigMoves, mDithers, mLast.throttle,
                   mLast.brake, mLast.steer, mLastSlip * 57.3f, LatAccel() / 9.81f, ownSide ? 0 : 1, mCautionGap,
-                  people, mCrosswalkGap, status.c_str());
+                  people, mCrosswalkGap, mCar.Reach(), mCar.turnMax, mCar.turnMax > 0.0f ? 1.0f / mCar.turnMax : 0.0f,
+                  mPathYawRate * 57.3f, CurvatureAt(mProgress), mWideGap, mJunctionsSolved, mJunctionBefore,
+                  mJunctionAfter, status.c_str());
 }
 
 // The whole plan, a line per metre: position, lane, room, speed limit and plan.

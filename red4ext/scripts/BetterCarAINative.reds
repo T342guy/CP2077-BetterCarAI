@@ -89,6 +89,9 @@ public static native func BCAI_DriverSense(ends: array<Vector4>) -> Int32
 // The car's own body when Autodrive+ starts: X front, Y rear (from its
 // centre), Z half its width, W the height its forward rays start at.
 public static native func BCAI_DriverBody(body: Vector4) -> Bool
+// The car's steering geometry: X wheelbase (m), Y steering lock (degrees),
+// Z mass (kg). Keeps the learned full-lock turn within the wheel geometry.
+public static native func BCAI_DriverProfile(vehicle: ref<IScriptable>, profile: Vector4) -> Bool
 // Vehicles the game lists nearby, three entries each: position (W 1 parked,
 // +2 a bike, +4 a person on foot), forward, velocity. Returns how many the
 // driver follows.

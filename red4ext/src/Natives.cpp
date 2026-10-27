@@ -460,6 +460,21 @@ void NativeDriverBody(IScriptable*, CStackFrame* aFrame, bool* aOut, int64_t)
         *aOut = true;
 }
 
+// BCAI_DriverProfile(vehicle: ref<IScriptable>, profile: Vector4) -> Bool:
+// X wheelbase (m), Y steering lock (degrees), Z mass (kg). Keeps the learned
+// Reach from exceeding the wheel geometry.
+void NativeDriverProfile(IScriptable*, CStackFrame* aFrame, bool* aOut, int64_t)
+{
+    RED4ext::Handle<RED4ext::IScriptable> vehicle;
+    RED4ext::Vector4 profile{};
+    RED4ext::GetParameter(aFrame, &vehicle);
+    RED4ext::GetParameter(aFrame, &profile);
+    aFrame->code++;
+    DriverProfile(reinterpret_cast<uintptr_t>(vehicle.instance), profile.X, profile.Y, profile.Z);
+    if (aOut)
+        *aOut = vehicle != nullptr;
+}
+
 // BCAI_DriverVehicles(list: array<Vector4>) -> Int32: the vehicles near the
 // car, three entries each: position (W: 1 parked, +2 a bike, +4 a person on
 // foot), forward (W: its length, 0 not known), velocity (W: its width).
@@ -836,6 +851,12 @@ void RegisterNatives()
     driverBody->AddParam("Vector4", "body");
     driverBody->SetReturnType("Bool");
     rtti->RegisterFunction(driverBody);
+
+    auto* driverProfile = Make("BCAI_DriverProfile", &NativeDriverProfile);
+    driverProfile->AddParam("handle:IScriptable", "vehicle");
+    driverProfile->AddParam("Vector4", "profile");
+    driverProfile->SetReturnType("Bool");
+    rtti->RegisterFunction(driverProfile);
 
     auto* driverVehicles = Make("BCAI_DriverVehicles", &NativeDriverVehicles);
     driverVehicles->AddParam("array:Vector4", "list");

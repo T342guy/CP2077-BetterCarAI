@@ -5,6 +5,125 @@
 // rays. It calls no plugin natives, so the scripts still compile without the
 // plugin.
 
+// The car's own body, measured for Autodrive+ and for the debug overlay.
+// Kept as a static class so the overlay can measure the car even when
+// Autodrive+ is off (its BCAIOwnDriver no longer exists then).
+public class BCAIVehicleBody extends IScriptable {
+  // X front, Y rear (from the centre), Z half width, W the forward rays'
+  // height above the car's origin.
+  public static func Measure(game: GameInstance, vehicle: ref<VehicleObject>, sensorGroup: CName) -> Vector4 {
+    let group: CName = IsNameValid(sensorGroup) ? sensorGroup : n"Vehicle";
+    let reach: Float = 4.0;
+    let front: Float = -1.0;
+    let rear: Float = -1.0;
+    // (Rays from 6 m out; finding nothing (a long vehicle's body starts
+    // further out), try 15 m, then 27 m, then 42 m. The record's size can't
+    // say: the game gives 3 x 1 m for cars 5.5 m long. Never fall back to
+    // 3 m: that is inside any vehicle longer than a car.)
+    let reaches: array<Float> = [4.0, 13.0, 25.0, 40.0];
+    let i: Int32 = 0;
+    while i < ArraySize(reaches) && (front < 0.0 || rear < 0.0) {
+      reach = reaches[i];
+      if front < 0.0 {
+        front = BCAIVehicleBody.Front(game, vehicle, group, reach);
+      };
+      if rear < 0.0 {
+        rear = BCAIVehicleBody.Along(game, vehicle, group, -1.0, reach);
+      };
+      i += 1;
+    };
+    if front < 0.0 {
+      front = MinF(reach, 10.0);
+    };
+    if rear < 0.0 {
+      rear = MinF(reach, 10.0);
+    };
+    let bodyReach: Float = MaxF(MaxF(front, rear), 4.0);
+    let halfReach: Float = MaxF(2.0, MinF(0.4 * bodyReach, 3.0));
+    let halfWidth: Float = BCAIVehicleBody.Across(game, vehicle, group, bodyReach, halfReach,
+      MaxF(0.95, MinF(0.4 * bodyReach, 2.5)));
+    let sensorHeight: Float = ClampF(0.7 + 0.05 * (front + rear), 0.7, 1.5);
+    return new Vector4(front, rear, halfWidth, sensorHeight);
+  }
+
+  private static func Front(game: GameInstance, vehicle: ref<VehicleObject>, group: CName, reach: Float) -> Float {
+    let sqs: ref<SpatialQueriesSystem> = GameInstance.GetSpatialQueriesSystem(game);
+    let fwd: Vector4 = vehicle.GetWorldForward();
+    let up: Vector4 = vehicle.GetWorldUp();
+    let heights: array<Float> = [0.45, 0.7, 0.95, 1.2, 1.5];
+    let best: Float = -1.0;
+    let i: Int32 = 0;
+    while i < ArraySize(heights) {
+      let trace: TraceResult;
+      let centre: Vector4 = vehicle.GetWorldPosition() + up * heights[i];
+      if sqs.SyncRaycastByCollisionGroup(centre + fwd * (reach + 2.0), centre, group, trace, false, false) && TraceResult.IsValid(trace) {
+        let front: Float = Vector4.Dot(Vector4.Vector3To4(trace.position) - centre, fwd);
+        if front > 1.5 && front < reach && front > best {
+          best = front;
+        };
+      };
+      i += 1;
+    };
+    return best;
+  }
+
+  private static func Along(game: GameInstance, vehicle: ref<VehicleObject>, group: CName, aDir: Float, reach: Float) -> Float {
+    let sqs: ref<SpatialQueriesSystem> = GameInstance.GetSpatialQueriesSystem(game);
+    let fwd: Vector4 = vehicle.GetWorldForward() * aDir;
+    let up: Vector4 = vehicle.GetWorldUp();
+    let heights: array<Float> = [0.45, 0.7, 0.95, 1.2, 1.5];
+    let best: Float = -1.0;
+    let i: Int32 = 0;
+    while i < ArraySize(heights) {
+      let trace: TraceResult;
+      let centre: Vector4 = vehicle.GetWorldPosition() + up * heights[i];
+      if sqs.SyncRaycastByCollisionGroup(centre + fwd * (reach + 2.0), centre, group, trace, false, false) && TraceResult.IsValid(trace) {
+        let along: Float = Vector4.Dot(Vector4.Vector3To4(trace.position) - centre, fwd);
+        if along > 1.0 && along < reach && along > best {
+          best = along;
+        };
+      };
+      i += 1;
+    };
+    return best;
+  }
+
+  private static func Across(game: GameInstance, vehicle: ref<VehicleObject>, group: CName,
+                             bodyReach: Float, halfReach: Float, aFallback: Float) -> Float {
+    let sqs: ref<SpatialQueriesSystem> = GameInstance.GetSpatialQueriesSystem(game);
+    let fwd: Vector4 = vehicle.GetWorldForward();
+    let up: Vector4 = vehicle.GetWorldUp();
+    let right: Vector4 = vehicle.GetWorldRight();
+    let heights: array<Float> = [0.5, 0.8, 1.05, 1.3, 1.5];
+    let along: Float = MinF(0.45 * bodyReach, 4.5);
+    let alongs: array<Float> = [-along, 0.0, along];
+    let sides: array<Float> = [-1.0, 1.0];
+    let best: Float = -1.0;
+    let h: Int32 = 0;
+    while h < ArraySize(heights) {
+      let a: Int32 = 0;
+      while a < ArraySize(alongs) {
+        let k: Int32 = 0;
+        while k < ArraySize(sides) {
+          let trace: TraceResult;
+          let middle: Vector4 = vehicle.GetWorldPosition() + up * heights[h] + fwd * alongs[a];
+          let out: Vector4 = right * sides[k];
+          if sqs.SyncRaycastByCollisionGroup(middle + out * (halfReach + 1.0), middle, group, trace, false, false) && TraceResult.IsValid(trace) {
+            let reach: Float = Vector4.Dot(Vector4.Vector3To4(trace.position) - middle, out);
+            if reach > 0.4 && reach < halfReach && reach > best {
+              best = reach;
+            };
+          };
+          k += 1;
+        };
+        a += 1;
+      };
+      h += 1;
+    };
+    return best > 0.0 ? best : aFallback;
+  }
+}
+
 public class BCAIOwnDriver extends IScriptable {
   public let vehicle: wref<VehicleObject>;
   private let input: ref<BCAIInputWatch>;
@@ -41,43 +160,11 @@ public class BCAIOwnDriver extends IScriptable {
     this.sensorGroup = IsNameValid(sensorGroup) ? sensorGroup : n"Vehicle";
     this.obstacle = -1.0;
     this.player = player;
-    // (Rays from 6 m out; finding nothing (a long vehicle's body starts
-    // further out), try 15 m, then 27 m, then 42 m. The record's size can't
-    // say: the game gives 3 x 1 m for cars 5.5 m long. Never fall back to
-    // 3 m: that is inside any vehicle longer than a car, and puts the rays
-    // in its own body instead of at its front.)
-    this.reach = 4.0;
-    this.halfReach = 2.0;
-    this.front = -1.0;
-    this.rear = -1.0;
-    let reaches: array<Float> = [4.0, 13.0, 25.0, 40.0];
-    let i: Int32 = 0;
-    while i < ArraySize(reaches) && (this.front < 0.0 || this.rear < 0.0) {
-      this.reach = reaches[i];
-      if this.front < 0.0 {
-        this.front = this.MeasureFront(game, vehicle, -1.0);
-      };
-      if this.rear < 0.0 {
-        this.rear = this.MeasureAlong(game, vehicle, -1.0, -1.0);
-      };
-      i += 1;
-    };
-    // (Still nothing even at 40 m: the body may not be in the vehicle's
-    // collision group. Use a long safe point rather than the old 3 m that
-    // sat inside the car; the start log shows the measured values.)
-    if this.front < 0.0 {
-      this.front = MinF(this.reach, 10.0);
-    };
-    if this.rear < 0.0 {
-      this.rear = MinF(this.reach, 10.0);
-    };
-    // The width samples follow the measured body, not the last search reach.
-    this.reach = MaxF(MaxF(this.front, this.rear), 4.0);
-    this.halfReach = MaxF(2.0, MinF(0.4 * this.reach, 3.0));
-    this.halfWidth = this.MeasureAcross(game, vehicle, MaxF(0.95, MinF(0.4 * this.reach, 2.5)));
-    // Tall vehicles look from windscreen height (the plugin uses this for
-    // the rays; cars stay near the old 0.7 m).
-    this.sensorHeight = ClampF(0.7 + 0.05 * (this.front + this.rear), 0.7, 1.5);
+    let body: Vector4 = BCAIVehicleBody.Measure(game, vehicle, this.sensorGroup);
+    this.front = body.X;
+    this.rear = body.Y;
+    this.halfWidth = body.Z;
+    this.sensorHeight = body.W;
     ArrayClear(this.targeted);
     ArrayClear(this.peopleTargeted);
     this.targetedAt = -1.0;

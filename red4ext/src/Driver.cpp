@@ -15,6 +15,7 @@ std::string Driver::Start(const LaneGraph& aGraph, const Point3& aPos, const Poi
 {
     CarResponse car = mCar; // what it learned about the car stays
     float front = mFront, rear = mRear, halfWidth = mHalfWidth, sensorHeight = mSensorHeight;
+    float wheelbase = mWheelbase, wheelTurn = mWheelTurnDeg, mass = mMass;
     std::deque<Event> events = std::move(mEvents); // (and what the log hasn't taken yet)
     *this = Driver{};
     mCar = car;
@@ -23,6 +24,9 @@ std::string Driver::Start(const LaneGraph& aGraph, const Point3& aPos, const Poi
     mRear = rear;
     mHalfWidth = halfWidth;
     mSensorHeight = sensorHeight;
+    mWheelbase = wheelbase;
+    mWheelTurnDeg = wheelTurn;
+    mMass = mass;
     mHasGoal = aGoal != nullptr;
     if (aGoal)
         mGoal = *aGoal;
@@ -134,6 +138,21 @@ Motion Driver::Feel(const Point3& aPos, const Point3& aFwd, const Point3& aVel, 
     mHeading = heading;
     mLastV = v;
     mHaveHeading = true;
+    // Path curvature from where the car is actually going, not where its
+    // body points: at 5-17 degrees of slip the body yaw overstates how
+    // tightly the car is turning, and that was making Reach too large.
+    float velHeading = heading;
+    if (std::hypot(aVel.x, aVel.y) > 2.0f)
+        velHeading = std::atan2(aVel.y, aVel.x);
+    if (mHaveVelHeading && std::fabs(v) > 2.0f)
+    {
+        float rp = Wrap(velHeading - mVelHeading) / dt;
+        mPathYawRate += (rp - mPathYawRate) * std::min(1.0f, dt / 0.10f);
+    }
+    else
+        mPathYawRate *= 1.0f - std::min(1.0f, dt);
+    mVelHeading = velHeading;
+    mHaveVelHeading = true;
     // The controls as the car feels them: the game turns the wheel and
     // builds up the pedals with some delay.
     mSteerFelt += (mSteer - mSteerFelt) * std::min(1.0f, dt / 0.2f);
@@ -394,7 +413,7 @@ float Driver::TargetSpeed(const Motion& m, float aMaxSteer, float aWantRate, flo
     // while it grips), for a moment. (A few degrees of slip, and the tyres'
     // squeal, are the game's cars cornering hard, not sliding.)
     {
-        float slip = std::fabs(m.slip), side = std::fabs(v * mYawRate);
+        float slip = std::fabs(m.slip), side = std::fabs(v * mPathYawRate);
         if (v > 8.0f && slip > 0.03f && slip < kLearnSlip && side > 2.0f && side < 0.9f * kLearnSide &&
             mSlideTime <= 0.0f)
             mCar.slipStiff += (std::clamp(side / slip, 40.0f, 200.0f) - mCar.slipStiff) * std::min(1.0f, dt / 3.0f);
@@ -404,8 +423,8 @@ float Driver::TargetSpeed(const Motion& m, float aMaxSteer, float aWantRate, flo
     // Out of grip (sliding, or the wheel at its limit and the car still
     // turning too little): bring the speed down gradually until it grips.
     bool noGrip = v > 8.0f && (mSlideTime > 0.15f ||
-                               (std::fabs(mSteer) >= aMaxSteer - 0.02f && aWantRate * mYawRate >= 0.0f &&
-                                std::fabs(mYawRate) < 0.7f * std::fabs(aWantRate)));
+                               (std::fabs(mSteer) >= aMaxSteer - 0.02f && aWantRate * mPathYawRate >= 0.0f &&
+                                std::fabs(mPathYawRate) < 0.7f * std::fabs(aWantRate)));
     if (noGrip)
         mGripSpeed = std::min(mGripSpeed, v) - 3.0f * dt;
     else
@@ -416,7 +435,7 @@ float Driver::TargetSpeed(const Motion& m, float aMaxSteer, float aWantRate, flo
     // where it last slid, slowly past that). Gentle bends say nothing of
     // the limit: a low-grip car rose on them and met a hard bend too fast.
     {
-        float side = std::fabs(v * mYawRate), g = mCar.grip > 0.0f ? mCar.grip : kStartGrip;
+        float side = std::fabs(v * mPathYawRate), g = mCar.grip > 0.0f ? mCar.grip : kStartGrip;
         bool slid = v > 8.0f && side > 4.0f &&
                     (mSlideTime > 0.15f || (noGrip && std::fabs(mSteer) >= aMaxSteer - 0.02f));
         if (slid && side < g)
@@ -573,7 +592,7 @@ void Driver::LearnResponse(float v, float aSlip, float aGravity, float dt)
     // full lock by the fit's power), while it grips (cornering hard the
     // game's cars slip a few degrees); rising over a second.
     {
-        float steerLeft = -mSteerFelt * mSteerSign, curv = v > 3.0f ? mYawRate / v : 0.0f;
+        float steerLeft = -mSteerFelt * mSteerSign, curv = v > 3.0f ? mPathYawRate / v : 0.0f;
         if (mSignKnown && v > 3.0f && std::fabs(steerLeft) > 0.5f && std::fabs(mSteer - mSteerFelt) < 0.1f &&
             mSlideTime <= 0.15f && std::fabs(aSlip) < kLearnSlip && mLast.handbrake <= 0.0f &&
             steerLeft * curv > 0.0f)
@@ -581,8 +600,16 @@ void Driver::LearnResponse(float v, float aSlip, float aGravity, float dt)
             float full = std::min(std::fabs(curv) * CarResponse::SpeedTurn(v) /
                                       std::pow(std::fabs(steerLeft), mCar.steer.p),
                                   0.5f);
-            if (full > mCar.turnSeen)
-                mCar.turnSeen += (full - mCar.turnSeen) * std::min(1.0f, dt / 1.0f);
+            // The wheel geometry is a ceiling: the car cannot turn tighter
+            // than its steering lock and wheelbase allow.
+            if (mCar.turnMax > 0.0f)
+                full = std::min(full, mCar.turnMax);
+            // Track both ways: a high-slip transient must not leave Reach
+            // permanently too tight (or, after a good full-lock turn, too
+            // wide). Rise over about a second, fall over about five.
+            if (full > 0.0f)
+                mCar.turnSeen += (full - mCar.turnSeen) *
+                                 std::min(1.0f, dt / (full > mCar.turnSeen ? 1.0f : 5.0f));
         }
     }
     if (v < 3.0f || std::fabs(aSlip) > kLearnSlip || mLast.handbrake > 0.0f)
@@ -616,10 +643,10 @@ void Driver::LearnResponse(float v, float aSlip, float aGravity, float dt)
     // the old 3-degree / 0.6 g gate left the fit at the gentle-corner value
     // and the speed plan kept crawling through bends a truck can take.
     float steerLeft = -mSteerFelt * mSteerSign;
-    float curv = mYawRate / v;
+    float curv = mPathYawRate / v;
     if (mSignKnown && v > 4.0f && std::fabs(steerLeft) > 0.05f && std::fabs(mSteer - mSteerFelt) < 0.05f &&
         std::fabs(aSlip) < kLearnSlip && mSlideTime <= 0.15f && steerLeft * curv > 0.0f &&
-        std::fabs(mYawRate) > 0.01f && std::fabs(mYawRate * v) < kLearnSide)
+        std::fabs(mPathYawRate) > 0.01f && std::fabs(mPathYawRate * v) < kLearnSide)
     {
         float slipWeight = std::clamp(1.0f - std::fabs(aSlip) / kLearnSlip, 0.25f, 1.0f);
         mCar.steer.Add(std::fabs(steerLeft), std::fabs(curv) * CarResponse::SpeedTurn(v), dt * slipWeight, keep);
@@ -695,6 +722,30 @@ void DriverBody(float aFront, float aRear, float aHalfWidth, float aSensorHeight
 {
     std::lock_guard lock(gDriverMutex);
     gDriver.SetBody(aFront, aRear, aHalfWidth, aSensorHeight);
+}
+
+void DriverProfile(uintptr_t aCar, float aWheelbase, float aWheelTurnDeg, float aMass)
+{
+    std::lock_guard lock(gDriverMutex);
+    gDriver.SetProfile(aCar, aWheelbase, aWheelTurnDeg, aMass);
+}
+
+void Autodrive::Driver::SetProfile(uintptr_t aCar, float aWheelbase, float aWheelTurnDeg, float aMass)
+{
+    // The record's steering lock and the body's length are the best geometry
+    // we have. A full lock cannot turn tighter than tan(lock)/wheelbase; use
+    // that as a ceiling on what the learned Reach is allowed to become.
+    float wheelbase = aWheelbase > 1.0f ? aWheelbase : 0.9f * (mFront + mRear);
+    float lock = std::clamp(aWheelTurnDeg, 10.0f, 60.0f);
+    float maxCurv = std::tan(lock * 3.14159265f / 180.0f) / std::max(wheelbase, 1.5f);
+    mWheelbase = wheelbase;
+    mWheelTurnDeg = lock;
+    mMass = aMass;
+    // A different car starts its learned response over; the same car keeps it.
+    if (mCar.car != aCar)
+        mCar.Reset(aCar);
+    mCar.car = aCar;
+    mCar.turnMax = std::clamp(maxCurv, 0.05f, 0.5f);
 }
 
 size_t DriverVehicles(const std::vector<DriverVehicle>& aList)

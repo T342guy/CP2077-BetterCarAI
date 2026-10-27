@@ -70,11 +70,16 @@ public class BCAIDebug extends IScriptable {
   private let nearestVehicle: Float;
   private let nearestWall: Float;
   public let lookahead: Float;
-  // The car's measured front/rear and ray height (Autodrive+): the debug ray
-  // fan starts ahead of the body, not 3 m from its centre (inside a truck).
+  // The car's measured front/rear and ray height: the debug ray fan starts
+  // ahead of the body, not 3 m from its centre (inside a truck). While
+  // Autodrive+ runs, its measured body is used; otherwise the overlay
+  // measures the current car itself.
   public let front: Float;
   public let rear: Float;
   public let sensorHeight: Float;
+  public let hasOwnBody: Bool;
+  private let bodyVehicle: wref<VehicleObject>;
+  private let bodyAt: Float;
 
   // Drive info supplied by BCAISettings.
   private let hasTarget: Bool;
@@ -113,6 +118,8 @@ public class BCAIDebug extends IScriptable {
     this.front = 3.0;
     this.rear = 3.0;
     this.sensorHeight = 0.8;
+    this.hasOwnBody = false;
+    this.bodyAt = -1.0;
   }
 
   // Points with the planned speed in W (m/s), when withSpeed.
@@ -269,6 +276,16 @@ public class BCAIDebug extends IScriptable {
     this.up = vehicle.GetWorldUp();
     right = vehicle.GetWorldRight();
     this.vel = vehicle.GetLinearVelocity();
+    // Without Autodrive+ there is no BCAIOwnDriver to have measured the body;
+    // measure it here (once per car, refreshed every couple of seconds).
+    if !this.hasOwnBody && (vehicle != this.bodyVehicle || now - this.bodyAt > 2.0) {
+      let body: Vector4 = BCAIVehicleBody.Measure(game, vehicle, n"Vehicle");
+      this.front = body.X;
+      this.rear = body.Y;
+      this.sensorHeight = body.W;
+      this.bodyVehicle = vehicle;
+      this.bodyAt = now;
+    };
     this.speed = Vector4.Length(this.vel);
     this.lateral = Vector4.Dot(this.vel, right);
 
