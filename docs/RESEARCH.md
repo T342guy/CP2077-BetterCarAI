@@ -1099,3 +1099,41 @@ Setting `AutoDriveEnabled` also switches the player to the autodrive input conte
 **Untested in game (0.31):** whether the targeting query returns crowd NPCs, and how many; people's positions and walking speeds as the plugin works them out; the crosswalk slowing; the truck's waits.
 
 <!-- ANCHOR_END: v031 -->
+
+## Large-vehicle body, steering and grip (plugin 0.31.1)
+
+<!-- ANCHOR: v0311 -->
+
+The first large-vehicle tests (the user's 7.6 m, 3.03 m-wide vehicle) showed the wheel swinging lock to lock on a straight road, and the learned grip dropping from 0.95 g to 0.72 g in about a second while the car was still at full lock. The log had `off` swinging ±2 m with `wanted` up to 1.47 rad/s (about 1.8 g) against a learned grip of 5.1 m/s².
+
+**Body and rays.** `BCAIOwnDriver.Begin` now measures the front/rear with reaches 4, 13, 25 and 40 m (not 4 then 13), samples heights up to 1.5 m (a truck's front at windscreen height) and never falls back to the old 3 m, which sat inside any vehicle longer than a car and put the forward rays in its own body. A failed measurement uses a long safe point and is visible in the start log. The body also carries the ray height (`Body().W`, 0.7 m for a car, up to 1.5 m for a long vehicle); the plugin keeps it across `DriverStart` and raises `SetBody`'s limits to 20 m front/rear and 3 m half width. This also makes `Long()`/`Swing()`/`WideTurnWait()` actually run on the vehicles they were added for.
+
+**Steering and grip.** `Driver::Steer` now keeps the planned line's own curvature (`CurvatureAt`, including the sideways move) separate from the pure-pursuit correction. The understeer/grip guard uses the line's yaw rate (`mPathWantRate`), not the corrected demand: a 1-2 m lateral error used to look like lost grip and teach the car a grip it doesn't have. Only the correction is capped, at 0.9 × the learned grip; the planned bend itself is never capped. The look-ahead grows for a car that turns less (`0.15 / Reach`, up to 1.6×) and for a long body (up to 1.4×), so a heavy slow-steering vehicle starts its turn earlier instead of chasing and overcorrecting.
+
+The start log now says `rays N.N m up` and marks a long vehicle as `(long: swing-aware)`.
+
+**Second in-game test (the Bratsk semi, front 5.4 m / rear 4.1 m).** The swerve was gone, but the debug ray fan still started 3 m from the centre (inside the truck), and the driver's own forward rays had only the old 0.3 m clearance. The debug overlay now takes the measured front/rear and ray height from Autodrive+ and starts its fan ahead of the body; the plugin adds a length-proportional forward clearance (0.1 × length, so 0.95 m on the 9.5 m semi). `mStartHits` is reset every frame instead of accumulating over the drive, so the log's "rays started inside something" is now per frame.
+
+The semi also still cut/ran wide in junctions. The steering inverse used the learned fit's full lock, even though the tightest turn actually seen (`Reach`/`turnSeen`, already used by the speed plan) can be tighter. For long vehicles the inverse now uses `Reach` as full lock, so the wheel is not held further over than the bend needs. Cars keep the fit.
+
+**Simulator.** The same 40 city scenes as 0.31: 6 m off the road and 0.65 changes of mind per drive (0.31: 6 m and 0.95), the same 4 scenes with contact. A 7.6 m, 5.1 m/s², slow-wheel car on D1 went from 3.01 m maximum off line and 0.254 steering movement per second to 2.08 m and 0.205. The telemetry now prints `reach` after the learned steering fit.
+
+**Untested in game (0.31.1):** the new reach fallback and ray height on a Behemoth/cement truck; the adaptive look-ahead and correction cap on those vehicles.
+
+<!-- ANCHOR_END: v0311 -->
+
+## Learning at real cornering, and the plan gradient (plugin 0.31.2)
+
+<!-- ANCHOR: v0312 -->
+
+**The red plan line.** It was not a grip estimate: `BCAIDebug` coloured each plan segment by `planned speed / current speed` (red below 45%). The speed plan floors at 3 m/s (10.8 km/h), so any junction bend the planner thought the car could not take painted its whole approach red and the car crawled there. The reference is now the plan’s speed at the first point, or the car’s speed if it is already faster, so a normal slowdown no longer colours the approach red.
+
+**Learning the real steering response.** The steering fit only accepted samples below **2.9° of slip and 0.6 g** (`|slip| < 0.05`, `|yaw·v| < 6`). That excludes the 5-17° / up to 2 g cornering the driving tests called gripping, so a heavy vehicle never learned its real response: the fit stayed at the gentle-corner value, `Reach`/the speed plan stayed conservative, and the plan floored at 10.8 km/h. The fit now learns at up to **17° slip and 2.4 g**, with samples weighted down toward the slip limit, while the pedals still learn only in a straight line and true slides (`mSlideTime`) are still excluded. `turnSeen` and `slipStiff` use the same 17° envelope.
+
+**Kink guard.** `Profile` still uses a 4 m window for cars, but a 9.5-12 m truck cannot follow a 4 m kink. It now compares the short-window curvature with one scaled to 70% of the body length; if the short window alone would floor the plan but the long one is much gentler, it uses the long one. A real tight corner still uses the short window and still slows.
+
+**Simulator.** 40 city scenes: 0 m off the road and 0.85 changes of mind per drive (0.31.1: 6 m and 0.65), the same 4 contact scenes. The 9.5 m, 10 m/s², slow-wheel test car still uses the 3 m/s floor at one genuine tight junction; the kink guard only substitutes the long window when the short one is impossible and the long one is much gentler, so a real tight corner still slows. The wider learning envelope is the part that should raise `Reach` on the in-game truck.
+
+**Untested in game (0.31.2):** the wider learning envelope and kink guard on the Behemoth/cement truck; whether the plan gradient now reads sensibly in the overlay.
+
+<!-- ANCHOR_END: v0312 -->

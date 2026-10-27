@@ -18,6 +18,9 @@ public class BCAIOwnDriver extends IScriptable {
   // Its rear (from its centre) and half its width, measured like the front.
   public let rear: Float;
   public let halfWidth: Float;
+  // How high above its origin the forward rays should start (a tall truck's
+  // windscreen, not the road under it).
+  private let sensorHeight: Float;
   private let player: wref<PlayerPuppet>;
   // How far the body may reach from the centre along the car and to a side
   // (from its record's size; at least a car's).
@@ -38,23 +41,43 @@ public class BCAIOwnDriver extends IScriptable {
     this.sensorGroup = IsNameValid(sensorGroup) ? sensorGroup : n"Vehicle";
     this.obstacle = -1.0;
     this.player = player;
-    // (Rays from 6 m out; finding nothing there (a truck, whose body starts
-    // further out), from 15 m. Its record's size can't say: the game gives
-    // 3 x 1 m for cars 5.5 m long.)
+    // (Rays from 6 m out; finding nothing (a long vehicle's body starts
+    // further out), try 15 m, then 27 m, then 42 m. The record's size can't
+    // say: the game gives 3 x 1 m for cars 5.5 m long. Never fall back to
+    // 3 m: that is inside any vehicle longer than a car, and puts the rays
+    // in its own body instead of at its front.)
     this.reach = 4.0;
     this.halfReach = 2.0;
-    this.front = this.MeasureFront(game, vehicle, -1.0);
-    this.rear = this.MeasureAlong(game, vehicle, -1.0, -1.0);
-    if this.front < 0.0 || this.rear < 0.0 {
-      this.reach = 13.0;
+    this.front = -1.0;
+    this.rear = -1.0;
+    let reaches: array<Float> = [4.0, 13.0, 25.0, 40.0];
+    let i: Int32 = 0;
+    while i < ArraySize(reaches) && (this.front < 0.0 || this.rear < 0.0) {
+      this.reach = reaches[i];
       if this.front < 0.0 {
-        this.front = this.MeasureFront(game, vehicle, 3.0);
+        this.front = this.MeasureFront(game, vehicle, -1.0);
       };
       if this.rear < 0.0 {
-        this.rear = this.MeasureAlong(game, vehicle, -1.0, 3.0);
+        this.rear = this.MeasureAlong(game, vehicle, -1.0, -1.0);
       };
+      i += 1;
     };
-    this.halfWidth = this.MeasureAcross(game, vehicle, 0.95);
+    // (Still nothing even at 40 m: the body may not be in the vehicle's
+    // collision group. Use a long safe point rather than the old 3 m that
+    // sat inside the car; the start log shows the measured values.)
+    if this.front < 0.0 {
+      this.front = MinF(this.reach, 10.0);
+    };
+    if this.rear < 0.0 {
+      this.rear = MinF(this.reach, 10.0);
+    };
+    // The width samples follow the measured body, not the last search reach.
+    this.reach = MaxF(MaxF(this.front, this.rear), 4.0);
+    this.halfReach = MaxF(2.0, MinF(0.4 * this.reach, 3.0));
+    this.halfWidth = this.MeasureAcross(game, vehicle, MaxF(0.95, MinF(0.4 * this.reach, 2.5)));
+    // Tall vehicles look from windscreen height (the plugin uses this for
+    // the rays; cars stay near the old 0.7 m).
+    this.sensorHeight = ClampF(0.7 + 0.05 * (this.front + this.rear), 0.7, 1.5);
     ArrayClear(this.targeted);
     ArrayClear(this.peopleTargeted);
     this.targetedAt = -1.0;
@@ -87,15 +110,15 @@ public class BCAIOwnDriver extends IScriptable {
   }
 
   // The car's front: rays from 6 m ahead back to its centre hit it there,
-  // at a few heights (a sloping nose reaches furthest low down), the
-  // furthest of them. Something else ahead would be hit first, so anything
-  // further than the body can reach (4 m for a car; a truck's from its
-  // record) is left out; nothing measured falls back to aFallback.
+  // at a few heights (a sloping nose reaches furthest low down, a truck's
+  // front at windscreen height), the furthest of them. Something else
+  // ahead would be hit first, so anything further than the body can reach
+  // is left out; nothing measured falls back to aFallback.
   private func MeasureFront(game: GameInstance, vehicle: ref<VehicleObject>, aFallback: Float) -> Float {
     let sqs: ref<SpatialQueriesSystem> = GameInstance.GetSpatialQueriesSystem(game);
     let fwd: Vector4 = vehicle.GetWorldForward();
     let up: Vector4 = vehicle.GetWorldUp();
-    let heights: array<Float> = [0.45, 0.7, 0.95];
+    let heights: array<Float> = [0.45, 0.7, 0.95, 1.2, 1.5];
     let best: Float = -1.0;
     let i: Int32 = 0;
     while i < ArraySize(heights) {
@@ -119,7 +142,7 @@ public class BCAIOwnDriver extends IScriptable {
     let sqs: ref<SpatialQueriesSystem> = GameInstance.GetSpatialQueriesSystem(game);
     let fwd: Vector4 = vehicle.GetWorldForward() * aDir;
     let up: Vector4 = vehicle.GetWorldUp();
-    let heights: array<Float> = [0.45, 0.7, 0.95];
+    let heights: array<Float> = [0.45, 0.7, 0.95, 1.2, 1.5];
     let best: Float = -1.0;
     let i: Int32 = 0;
     while i < ArraySize(heights) {
@@ -143,8 +166,9 @@ public class BCAIOwnDriver extends IScriptable {
     let fwd: Vector4 = vehicle.GetWorldForward();
     let up: Vector4 = vehicle.GetWorldUp();
     let right: Vector4 = vehicle.GetWorldRight();
-    let heights: array<Float> = [0.5, 0.8, 1.05];
-    let alongs: array<Float> = [-0.3 * this.reach, 0.0, 0.3 * this.reach];
+    let heights: array<Float> = [0.5, 0.8, 1.05, 1.3, 1.5];
+    let along: Float = MinF(0.45 * this.reach, 4.5);
+    let alongs: array<Float> = [-along, 0.0, along];
     let sides: array<Float> = [-1.0, 1.0];
     let best: Float = -1.0;
     let h: Int32 = 0;
@@ -182,9 +206,10 @@ public class BCAIOwnDriver extends IScriptable {
     return new Vector4(0.0, 0.0, 0.0, 0.0);
   }
 
-  // The car's body for the plugin: X front, Y rear, Z half width.
+  // The car's body for the plugin: X front, Y rear, Z half width, W the
+  // height its forward rays start at.
   public func Body() -> Vector4 {
-    return new Vector4(this.front, this.rear, this.halfWidth, 0.0);
+    return new Vector4(this.front, this.rear, this.halfWidth, this.sensorHeight);
   }
 
   // Vehicles near the car, as the game knows them, three entries each:

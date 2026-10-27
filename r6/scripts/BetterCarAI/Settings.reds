@@ -285,6 +285,16 @@ public class BCAISettings extends ScriptableSystem {
     if IsDefined(player) {
       VehicleComponent.GetVehicle(game, player, vehicle);
     };
+    if this.IsOwnDriving() {
+      let body: Vector4 = this.OwnDriverBody();
+      d.front = body.X;
+      d.rear = body.Y;
+      d.sensorHeight = body.W;
+    } else {
+      d.front = 3.0;
+      d.rear = 3.0;
+      d.sensorHeight = 0.8;
+    };
     d.Tick(game, vehicle);
     if !IsDefined(vehicle) {
       ArrayPush(lines, "not in a vehicle");

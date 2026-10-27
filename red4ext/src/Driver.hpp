@@ -49,6 +49,13 @@ constexpr float kCarWidth = 1.9f, kCarLength = 4.6f;
 // well past what the cornering asks for (CarResponse::slipStiff), or past
 // this slip angle (radians) whatever it corners at.
 constexpr float kSlideSlip = 0.45f;
+// The slip angles and cornering loads worth learning from: the driving
+// tests found the game's cars corner hardest at 8-15 degrees (about 2 g),
+// and 5-17 degrees is still gripping, not sliding. (0.31.1 only learned the
+// steering response below 3 degrees and 0.6 g, so a truck that corners at
+// 5-17 degrees never updated it.)
+constexpr float kLearnSlip = 0.30f; // 17 degrees
+constexpr float kLearnSide = 24.0f; // about 2.4 g
 // The grip a car new to Autodrive+ corners at (m/s^2), until cornering
 // cleanly shows it holds more (up to the style's): a car with less grip than
 // the style asks for would otherwise slide off at its first hard corner.
@@ -405,7 +412,7 @@ public:
     // DriverSense.cpp
     std::vector<DriverRay> Rays(float aFront);
     size_t Sense(const std::vector<Point3>& aEnds, const std::vector<bool>& aHit);
-    void SetBody(float aFront, float aRear, float aHalfWidth);
+    void SetBody(float aFront, float aRear, float aHalfWidth, float aSensorHeight = 0.7f);
     size_t SetVehicles(const std::vector<DriverVehicle>& aList);
 
     // DriverReport.cpp
@@ -437,6 +444,7 @@ private:
     Point3 mPos{}, mFwd{1, 0, 0};
     float mFront = 2.4f, mRear = 2.4f; // the car's front and rear from its centre
     float mHalfWidth = kHalfWidth;      // half its width, with a little to spare
+    float mSensorHeight = 0.7f;         // the forward/rear rays' height above its origin
     std::vector<Known> mKnown;
     float mHeading = 0.0f, mYawRate = 0.0f, mSteer = 0.0f, mLastV = 0.0f, mAccel = 0.0f;
     float mSteerFelt = 0.0f, mThrottleFelt = 0.0f, mBrakeFelt = 0.0f;
@@ -500,7 +508,7 @@ private:
     bool mSignKnown = false;
     int mReplans = 0;
     DriverOutput mLast{};
-    float mLastWantRate = 0.0f, mLastPlanSpeed = 0.0f, mLastSlip = 0.0f;
+    float mLastWantRate = 0.0f, mPathWantRate = 0.0f, mLastPlanSpeed = 0.0f, mLastSlip = 0.0f;
     const char* mSpeedWhy = "";
     // The decision log: events not yet taken (the last 200), and what it
     // last said about each thing.
@@ -556,6 +564,16 @@ private:
         Point3 a = At(aS - 1.0f), b = At(aS + 1.0f);
         float dx = b.x - a.x, dy = b.y - a.y, l = std::hypot(dx, dy);
         return l > 1e-4f ? Point3{-dy / l, dx / l, 0} : Point3{0, 1, 0};
+    }
+
+    // The planned line's own curvature (1/m) at aS, with the sideways move
+    // included (the path the car is meant to follow, not the correction for
+    // where it is now).
+    float CurvatureAt(float aS) const
+    {
+        Point3 a = Driven(aS - 4.0f), b = Driven(aS), c = Driven(aS + 4.0f);
+        float h1 = std::atan2(b.y - a.y, b.x - a.x), h2 = std::atan2(c.y - b.y, c.x - b.x);
+        return Wrap(h2 - h1) / 4.0f;
     }
 
     // Where the car means to be at aS: the line plus the sideways move.

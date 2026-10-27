@@ -555,7 +555,8 @@ local function startOwnDriver()
   state.styleSent = nil
   sendStyle()
   local msg = "Autodrive+: ON, " .. Overlay.STYLE_NAMES[settings.ownStyle + 1] .. " (" .. result .. ")"
-  log(msg .. string.format(", own body: front %.1f m, rear %.1f m from centre, %.2f m wide", body.x, body.y, 2 * body.z)
+  log(msg .. string.format(", own body: front %.1f m, rear %.1f m from centre, %.2f m wide, rays %.1f m up%s",
+      body.x, body.y, 2 * body.z, body.w, (body.x + body.y > 7.0) and " (long: swing-aware)" or "")
     .. (goal.w > 0.5 and ("; destination: " .. tostring(sys:NavDestinationInfo())) or ""))
   state.ownVehicleTimer = 0
   state.ownVehiclesFailed = false

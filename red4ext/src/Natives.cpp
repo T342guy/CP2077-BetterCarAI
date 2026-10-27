@@ -449,13 +449,13 @@ void NativeDriverSense(IScriptable*, CStackFrame* aFrame, int32_t* aOut, int64_t
 
 // BCAI_DriverBody(body: Vector4) -> Bool: the car's own body, measured when
 // Autodrive+ starts: X its front and Y its rear from its centre, Z half its
-// width (m).
+// width, W the height its forward rays start at above its origin (m).
 void NativeDriverBody(IScriptable*, CStackFrame* aFrame, bool* aOut, int64_t)
 {
     RED4ext::Vector4 body{};
     RED4ext::GetParameter(aFrame, &body);
     aFrame->code++;
-    DriverBody(body.X, body.Y, body.Z);
+    DriverBody(body.X, body.Y, body.Z, body.W);
     if (aOut)
         *aOut = true;
 }

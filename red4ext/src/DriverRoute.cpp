@@ -467,23 +467,38 @@ void Driver::Profile()
         float wheel = std::clamp(1.3f - 0.02f * float(sp), 0.45f, 1.0f);
         turnMost[sp] = 0.9f * mCar.Reach() * std::pow(wheel, mCar.steer.p) / CarResponse::SpeedTurn(float(sp));
     }
+    // A kink shorter than the vehicle is not a turn it can follow: a 9.5 m
+    // truck cannot use a 4 m bend window. Compare the short window with one
+    // scaled to the body; if the short one alone would floor the plan but the
+    // long one is much gentler, it is a junction kink, not a real corner.
+    size_t bendLong = std::max<size_t>(kBendWindow, size_t(std::lround(0.7f * (mFront + mRear))));
+    bendLong = std::min<size_t>(bendLong, 16);
+    auto curve = [&](size_t i, size_t w, bool& ok)
+    {
+        ok = i >= w && i + w < n;
+        if (!ok)
+            return 0.0f;
+        const Point3 &a = mPath[i - w].p, &b = mPath[i].p, &c = mPath[i + w].p;
+        float turn = std::fabs(Wrap(std::atan2(c.y - b.y, c.x - b.x) - std::atan2(b.y - a.y, b.x - a.x)));
+        return turn / float(w);
+    };
     for (size_t i = 0; i < n; ++i)
     {
         float v = std::min(cap, std::max(mLimit[i] * mSettings.laneSpeedFactor, 8.0f));
-        if (i >= kBendWindow && i + kBendWindow < n)
+        bool okShort, okLong;
+        float kShort = curve(i, kBendWindow, okShort);
+        float kLong = curve(i, bendLong, okLong);
+        float k = kShort;
+        if (okShort && okLong && bendLong > kBendWindow && kShort > 0.8f * std::max(mCar.Reach(), 0.01f) &&
+            kLong < 0.65f * kShort)
+            k = kLong;
+        if (k > 1e-3f)
         {
-            const Point3 &a = mPath[i - kBendWindow].p, &b = mPath[i].p, &c = mPath[i + kBendWindow].p;
-            float turn = std::fabs(Wrap(std::atan2(c.y - b.y, c.x - b.x) - std::atan2(b.y - a.y, b.x - a.x)));
-            // The two chords point along the path w/2 either side of i.
-            float k = turn / float(kBendWindow);
-            if (k > 1e-3f)
-            {
-                v = std::min(v, std::sqrt(LatAccel() / k));
-                int sp = int(std::min(v, 70.0f));
-                while (sp > 3 && turnMost[sp] < k)
-                    --sp;
-                v = std::min(v, float(std::max(sp, 3)));
-            }
+            v = std::min(v, std::sqrt(LatAccel() / k));
+            int sp = int(std::min(v, 70.0f));
+            while (sp > 3 && turnMost[sp] < k)
+                --sp;
+            v = std::min(v, float(std::max(sp, 3)));
         }
         mSpeed[i] = std::max(v, 3.0f);
     }

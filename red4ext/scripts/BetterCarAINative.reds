@@ -87,7 +87,7 @@ public static native func BCAI_DriverRays(front: Float) -> array<Vector4>
 // points the sensor remembers.
 public static native func BCAI_DriverSense(ends: array<Vector4>) -> Int32
 // The car's own body when Autodrive+ starts: X front, Y rear (from its
-// centre), Z half its width.
+// centre), Z half its width, W the height its forward rays start at.
 public static native func BCAI_DriverBody(body: Vector4) -> Bool
 // Vehicles the game lists nearby, three entries each: position (W 1 parked,
 // +2 a bike, +4 a person on foot), forward, velocity. Returns how many the

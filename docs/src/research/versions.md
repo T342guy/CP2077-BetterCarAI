@@ -14,3 +14,5 @@ From plugin 0.14 the mod drives the car itself. Each version's notes say what ch
 - [0.29](v029.md): pedals, the game's autodrive HUD, trucks and walkways.
 - [0.30](v030.md): grip, steering reach, the driving test, turning round.
 - [0.31](v031.md): people on foot, and long vehicles at tight turns.
+- [0.31.1](v0311.md): large-vehicle body/ray measurement, steering anticipation and grip.
+- [0.31.2](v0312.md): learn the 5-17° / 2 g cornering response, kink guard, plan gradient.

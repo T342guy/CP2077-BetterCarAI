@@ -70,6 +70,11 @@ public class BCAIDebug extends IScriptable {
   private let nearestVehicle: Float;
   private let nearestWall: Float;
   public let lookahead: Float;
+  // The car's measured front/rear and ray height (Autodrive+): the debug ray
+  // fan starts ahead of the body, not 3 m from its centre (inside a truck).
+  public let front: Float;
+  public let rear: Float;
+  public let sensorHeight: Float;
 
   // Drive info supplied by BCAISettings.
   private let hasTarget: Bool;
@@ -105,6 +110,9 @@ public class BCAIDebug extends IScriptable {
   public func Init() -> Void {
     this.lookahead = 80.0;
     this.arrival = 15.0;
+    this.front = 3.0;
+    this.rear = 3.0;
+    this.sensorHeight = 0.8;
   }
 
   // Points with the planned speed in W (m/s), when withSpeed.
@@ -348,7 +356,13 @@ public class BCAIDebug extends IScriptable {
   private func CastRays(game: GameInstance) -> Void {
     let sqs: ref<SpatialQueriesSystem> = GameInstance.GetSpatialQueriesSystem(game);
     let left: Vector4 = Vector4.Normalize(Vector4.Cross(this.up, this.fwd));
-    let origin: Vector4 = this.pos + this.fwd * 3.0 + this.up * 0.8;
+    // A long vehicle's nose is further out than 3 m; keep the fan ahead of
+    // the body (the same clearance the plugin's sensor uses).
+    let ahead: Float = this.front + 0.3;
+    if this.front + this.rear > 7.0 {
+      ahead += 0.1 * (this.front + this.rear);
+    };
+    let origin: Vector4 = this.pos + this.fwd * ahead + this.up * this.sensorHeight;
     let angles: array<Float>;
     let dir: Vector4;
     let end: Vector4;
@@ -645,10 +659,18 @@ public class BCAIDebug extends IScriptable {
     // slowest point ahead labelled.
     i = this.hideRoute ? ArraySize(this.route) : 1;
     let slowest: Int32 = -1;
+    // Compare the plan ahead with the speed the car already means to go at
+    // the first point (or its actual speed, if it is already faster). Using
+    // the instantaneous speed alone painted the whole approach to a normal
+    // slowdown red, especially for a heavy vehicle already below its plan.
+    let reference: Float = MaxF(this.speed, 5.0);
+    if ArraySize(this.routeSpeed) > 0 {
+      reference = MaxF(reference, this.routeSpeed[0]);
+    };
     while i < ArraySize(this.route) {
       colour = BCAIDebug.Blue();
       if i < ArraySize(this.routeSpeed) {
-        let ratio: Float = this.routeSpeed[i] / MaxF(this.speed, 5.0);
+        let ratio: Float = this.routeSpeed[i] / reference;
         colour = ratio >= 0.9 ? BCAIDebug.Blue() : ratio >= 0.7 ? BCAIDebug.Yellow() : ratio >= 0.45 ? BCAIDebug.Orange() : BCAIDebug.Red();
         if slowest < 0 || this.routeSpeed[i] < this.routeSpeed[slowest] {
           slowest = i;

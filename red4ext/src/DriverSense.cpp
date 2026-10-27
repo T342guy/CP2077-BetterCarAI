@@ -15,6 +15,7 @@ std::vector<DriverRay> Driver::Rays(float aFront)
 {
     if (aFront > 0.5f)
         mFront = aFront;
+    mStartHits = 0;
     mRays.clear();
     if (!active || mPath.size() < 2)
         return mRays;
@@ -23,9 +24,11 @@ std::vector<DriverRay> Driver::Rays(float aFront)
     static const float kWallS[] = {4, 8, 13, 19, 27, 37, 50};
     static const float kWallL[] = {-4.0f, -2.0f, 0.0f, 2.0f, 4.0f};
     constexpr int kCars = 10 * 7, kWalls = 7 * 5, kCarsEach = 14, kWallsEach = 9;
-    // From the bumper, tilted with the car on a slope.
-    float reach = mFront + 0.3f;
-    Point3 origin{mPos.x + mFwd.x * reach, mPos.y + mFwd.y * reach, mPos.z + 0.7f + mSlope * reach};
+    // From the bumper, tilted with the car on a slope. A tall vehicle's
+    // rays look from windscreen height so they don't start in its own body
+    // or run along the road; a long nose also gets extra clearance.
+    float reach = mFront + 0.3f + (Long() ? 0.1f * (mFront + mRear) : 0.0f);
+    Point3 origin{mPos.x + mFwd.x * reach, mPos.y + mFwd.y * reach, mPos.z + mSensorHeight + mSlope * reach};
     // Each ray ends 0.7 m above the road, or higher where the road rises
     // in between (over a crest), so it never runs into the road itself.
     auto endZ = [&](float at)
@@ -226,15 +229,17 @@ size_t Driver::Sense(const std::vector<Point3>& aEnds, const std::vector<bool>& 
     return mSeen.size();
 }
 
-void Driver::SetBody(float aFront, float aRear, float aHalfWidth)
+void Driver::SetBody(float aFront, float aRear, float aHalfWidth, float aSensorHeight)
 {
-    // (Up to a long truck's: 12 m from its centre, 1.8 m to a side.)
-    if (aFront > 0.5f && aFront < 12.0f)
+    // (Up to a very long trailer's: 20 m from its centre, 3 m to a side.)
+    if (aFront > 0.5f && aFront < 20.0f)
         mFront = aFront;
-    if (aRear > 0.5f && aRear < 12.0f)
+    if (aRear > 0.5f && aRear < 20.0f)
         mRear = aRear;
-    if (aHalfWidth > 0.3f && aHalfWidth < 1.8f)
+    if (aHalfWidth > 0.3f && aHalfWidth < 3.0f)
         mHalfWidth = aHalfWidth + 0.05f;
+    if (aSensorHeight > 0.4f && aSensorHeight < 2.5f)
+        mSensorHeight = aSensorHeight;
 }
 
 // The game's list of vehicles (and people) nearby: each matched to the one

@@ -124,13 +124,13 @@ std::string Driver::Telemetry() const
     return Format("v %.1f target %.1f (plan %.1f) ahead %s lead %.1f | heading for %+.1f m (now %+.1f, road "
                   "%+.1f..%+.1f, own side %+.1f..%+.1f%s, line %+.1f from the lane), %zu seen, %zu cars tracked | off %+.2f m, steer %+.2f, turn %+.2f wanted %+.2f, slip %+.2f | "
                   "accel %+.1f wanted %+.1f trim %+.1f | throttle %.2f brake %.2f handbrake %.0f | %.0f of %.0f m, %d replans | "
-                  "learned: curvature %.2f*steer^%.1f, brake %.1f*brake^%.2f m/s2, full throttle %.1f, coasting "
+                  "learned: curvature %.2f*steer^%.1f reach %.2f, brake %.1f*brake^%.2f m/s2, full throttle %.1f, coasting "
                   "%+.1f m/s2, grip %.1f m/s2 | body %.1f/%.1f m, %.2f m wide",
                   v * 3.6f, mLast.targetSpeed * 3.6f, mLastPlanSpeed * 3.6f, ahead.c_str(), mLeadSpeed * 3.6f,
                   mShift.to, mShift.At(mProgress), pt.lo, pt.hi, pt.loSame, pt.hiSame, pt.junction ? ", junction" : "", pt.flow, mSeen.size(), mTracks.size(),
                   mLast.lateralError, mLast.steer, mYawRate, mLastWantRate, mLastSlip, mAccel, mAccelWant,
                   mAccelTrim, mLast.throttle, mLast.brake, mLast.handbrake, mProgress,
-                  mPath.empty() ? 0.0f : mS.back(), mReplans, mCar.steer.k, mCar.steer.p, mCar.brake.k, mCar.brake.p,
+                  mPath.empty() ? 0.0f : mS.back(), mReplans, mCar.steer.k, mCar.steer.p, mCar.Reach(), mCar.brake.k, mCar.brake.p,
                   CarResponse::Lookup(mCar.full, v), CarResponse::Lookup(mCar.coast, v), LatAccel(), mFront,
                   mRear, 2.0f * mHalfWidth);
 }

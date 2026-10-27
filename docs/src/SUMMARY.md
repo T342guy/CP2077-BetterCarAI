@@ -33,6 +33,8 @@
     - [0.29: pedals, trucks, walkways](research/v029.md)
     - [0.30: grip and the driving test](research/v030.md)
     - [0.31: people on foot, wide turns](research/v031.md)
+    - [0.31.1: large-vehicle body, steering and grip](research/v0311.md)
+    - [0.31.2: cornering learning and the plan gradient](research/v0312.md)
 
 # Development
 

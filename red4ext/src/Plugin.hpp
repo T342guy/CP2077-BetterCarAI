@@ -344,8 +344,9 @@ struct DriverRay
 std::vector<DriverRay> DriverRays(float aFront);
 size_t DriverSense(const std::vector<Point3>& aEnds, const std::vector<bool>& aHit);
 // The car's own body, measured when Autodrive+ starts: how far its front and
-// rear are from its centre, and half its width (m).
-void DriverBody(float aFront, float aRear, float aHalfWidth);
+// rear are from its centre, half its width, and the height the forward rays
+// should start at above its origin (m).
+void DriverBody(float aFront, float aRear, float aHalfWidth, float aSensorHeight = 0.7f);
 // Vehicles near the car as the game lists them (not just what the rays saw):
 // where each is, which way it points and how it moves. Their size is learned
 // from the rays that hit them. People on foot come in the same list (the
